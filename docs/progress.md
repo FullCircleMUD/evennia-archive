@@ -3,6 +3,31 @@
 Reverse-chronological milestone log. Newest first. Each entry states what became true and what proves
 it.
 
+## 2026-08-23 — Identity landed, migration path proven end to end
+
+`ArchivableMixin` ships. Identity is locked: attribute key `archive_id`, value `str(uuid.uuid4())`
+canonical lowercase hyphenated, stored `strattr=True` so it is unpickled in `db_strvalue`, minted in
+the creation hooks or via `at_archive_init()`, never overwritten. Two tests pin the decisions that
+are expensive to reverse — canonical round-trip through `uuid.UUID`, and `db_strvalue` populated with
+`db_value` null.
+
+`ArchiveRecord` and `ArchiveRouter` ship alongside it. The record carries `archived_model` and
+`archived_pk`, making it the index into the archive rather than only bookkeeping — primary keys
+inside the archive are stable because the archive is never rebuilt.
+
+**Evidence — a full install from a bare gamedir, following `archive-settings.md` verbatim:**
+
+| | `evennia.db3` | `archive.db3` |
+|---|---|---|
+| Tables | 42 | 43 |
+| `evennia_archive_archiverecord` | absent | present |
+| Accounts | 1 (`root`) | 0 |
+| Objects | 0 | 0 |
+
+The router is demonstrably consulted: `allow_migrate` refused the library's model against `default`
+and allowed it into `archive`, while letting Evennia's 42 tables through. Library test suite: 8 tests,
+all passing.
+
 ## 2026-08-23 — Design drafted, first decision locked
 
 [design.md](design.md) written as the intended finished state, with a box above every section that is

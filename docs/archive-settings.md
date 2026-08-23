@@ -1,11 +1,12 @@
 # Archive settings
 
-What a consumer declares in their own settings to install this library, why each entry is needed, and
-the one that will silently break an existing game if it is copied carelessly.
+What a consumer does to install this library — three settings entries and one change to their
+typeclasses — why each is needed, and the one entry that will silently break an existing game if it
+is copied carelessly.
 
-> **Working assumption — not locked in.** The library code these settings refer to is not written
-> yet. Names, paths and the router's existence are all provisional. What *is* proven is the migration
-> behaviour in the last section, which was tested against a real gamedir.
+> **Working assumption — not locked in.** Whether the router stays a consumer-declared entry or is
+> appended by the library from `AppConfig.ready()`. If it moves, entry 3 disappears from this
+> document. Everything else here is built and tested.
 
 ## What a consumer declares
 
@@ -30,6 +31,33 @@ if _ARCHIVE_ROUTER not in DATABASE_ROUTERS:
 
 The router is a dotted-path string, exactly like an app entry — the class ships with the library and
 a consumer never writes one.
+
+## Marking typeclasses as archivable
+
+Settings alone archive nothing. **The library only archives objects whose typeclass carries
+`ArchivableMixin`**, so mixing it in is how a consumer says which of their objects matter:
+
+```python
+from evennia_archive.mixins import ArchivableMixin
+
+class Character(ArchivableMixin, DefaultCharacter):
+    pass
+```
+
+That is the whole of it. The mixin mints an `archive_id` when the object is created and never changes
+it afterwards — there is no identifier to supply, generate, or keep unique.
+
+If your typeclass already overrides the creation hook, call the initialiser from it instead:
+
+```python
+def at_object_creation(self):
+    super().at_object_creation()
+    self.at_archive_init()
+```
+
+**Existing objects predate the mixin and have no identity.** Adding it to a typeclass affects objects
+created from then on; anything already in your database needs `at_archive_init()` called on it once,
+which is safe to run repeatedly and never overwrites an identity that already exists.
 
 ## Why the router list is appended, never assigned
 

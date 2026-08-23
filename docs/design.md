@@ -83,8 +83,20 @@ archived object.
 | Column | |
 |---|---|
 | `archive_id` | Primary key. The stable identifier, immutable, and the join key to everything else |
+| `archived_model` | Which archive table the copy sits in — `"objectdb"`, `"accountdb"` |
+| `archived_pk` | Primary key of the copy *within the archive database* |
 | `last_archived` | When the copy was last written. Not null — a row exists because something was archived |
 | `last_restored` | When it was last restored. Nullable; most objects never are |
+
+**`archived_model` and `archived_pk` make this the index into the archive**, not merely bookkeeping.
+Primary keys in the live database are worthless across a rebuild — that is the problem the library
+exists to solve — but the archive is never torn down, so a key *inside it* is stable by construction.
+Recording it turns "I have an `archive_id`, find the row" into a direct hit rather than an attribute
+lookup. The model is needed alongside the key because the archive holds several tables and a bare
+primary key is ambiguous between them.
+
+It also makes `archive()` an upsert: read the identity off the incoming object, look for a record,
+and either update the row it points at or insert a new copy and record where it landed.
 
 **`last_archived` earns its place because there is nowhere else to put it.** `ObjectDB` carries only
 `db_date_created`, which copies to the archive verbatim and records when the object was *made*, not
@@ -142,11 +154,34 @@ Requiring a mixin rather than inferring archivability means the library never gu
 without it is not archivable, and that is a consumer decision expressed in their own typeclass
 definitions.
 
-> **Working assumption — not locked in.** The identifier is a UUID, minted at object creation. What
-> the attribute is called, and whether it is a plain Attribute or an `AttributeProperty`, is open —
-> and it is the one decision that cannot be revised after release, because renaming it orphans every
-> archived row in every existing install. Worth confirming whether it lands in `db_strvalue`, which
-> would make it SQL-indexable and matter for bulk queries.
+### As built
+
+`ArchivableMixin` in `evennia_archive.mixins`.
+
+| | |
+|---|---|
+| Attribute key | `archive_id` — the one name in the library that cannot be revised after release |
+| Value | `str(uuid.uuid4())` — canonical, lowercase, hyphenated |
+| Storage | `strattr=True`, so it lands in `db_strvalue` **unpickled** |
+| Minted | In `at_object_creation` / `at_account_creation`, or `at_archive_init()` explicitly |
+| Type returned | `str`, not `uuid.UUID` |
+
+**Why unpickled matters more than it looks.** A pickled attribute is compared by pickling the search
+term and matching bytes, which only holds while the same value always serialises identically — across
+a protocol change it can quietly stop matching, and a lookup that silently returns nothing is the
+worst possible failure for a recovery path. Unpickled storage also means the column can be read by
+hand during exactly the incidents this library exists for.
+
+**Why canonical form is enforced at minting.** String equality is case- and format-sensitive where
+`uuid.UUID` comparison is not, so `"F47AC10B…"` and `"f47ac10b…"` would fail to match despite being
+the same identifier. Every value goes through one minting path, so every stored value has one form.
+
+**The mixin ships both creation conventions.** It overrides the creation hooks itself, *and* exposes
+`at_archive_init()` for a typeclass that already overrides them. A library cannot assume the
+consumer's MRO, so it cannot pick one.
+
+Both decisions are pinned by tests — the minted value must round-trip through `uuid.UUID` unchanged,
+and it must land in `db_strvalue` with `db_value` null.
 
 > **Working assumption — not locked in.** Consumers may register behaviour per typeclass. If so, the
 > lookup walks the **MRO** rather than matching the concrete class, so a consumer registering against
@@ -195,7 +230,7 @@ than hidden:
 
 | Column | |
 |---|---|
-| `db_strvalue` | Plain varchar — directly queryable and indexable. Most Attributes do not set it |
+| `db_strvalue` | Plain varchar — queryable by direct string equality, with no serialisation in the path. Not itself indexed. Most Attributes do not set it |
 | `db_value` | Pickled. Works, because Django pickles the search term to compare, but Evennia's own docstring calls it *"not a very efficient operation"* and no index helps |
 
 So a consumer whose identifying field lands in `strvalue` gets a lookup that scales; one using a
@@ -387,10 +422,9 @@ Collected from the boxes above, so they can be worked through deliberately.
 
 **Decisions:**
 
-1. The identity attribute's name and storage — irreversible after release.
-2. How consumers declare dispositions.
-3. Shallow versus deep archival.
-4. `find()`'s signature — whether it takes an explicit `strvalue`/`value` choice or infers it.
+1. How consumers declare dispositions.
+2. Shallow versus deep archival.
+3. `find()`'s signature — whether it takes an explicit `strvalue`/`value` choice or infers it.
 
 **Not yet examined at all:**
 
