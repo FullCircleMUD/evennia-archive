@@ -4,9 +4,8 @@ What a consumer does to install this library — three settings entries and one 
 typeclasses — why each is needed, and the one entry that will silently break an existing game if it
 is copied carelessly.
 
-> **Working assumption — not locked in.** Whether the router stays a consumer-declared entry or is
-> appended by the library from `AppConfig.ready()`. If it moves, entry 3 disappears from this
-> document. Everything else here is built and tested.
+Everything here is built and tested. The demo gamedir under `examples/` uses this document verbatim,
+so these instructions are what gets exercised rather than a paraphrase of them.
 
 ## What a consumer declares
 
@@ -73,18 +72,26 @@ there.
 The membership check also makes the block idempotent, so a settings module imported twice cannot
 stack duplicate routers.
 
-> **Working assumption — not locked in.** The library may instead append its own router from
-> `AppConfig.ready()`, which is the pattern `evennia-shards` uses for middleware and portal plugins.
-> That would remove entry 3 from this document entirely. It is untested: `django.db.router.routers`
-> is a `cached_property`, so if anything touches the ORM before `ready()` runs, the append lands on a
-> list Django has already snapshotted and the router silently never applies.
+## Why the consumer declares the router rather than the library injecting it
+
+`evennia-shards` appends its own middleware and portal plugins from `AppConfig.ready()`, so the
+technique is proven in a sibling. `DATABASE_ROUTERS` is the wrong setting to use it on.
+
+`django.db.router.routers` is a `cached_property`. Anything that touches the ORM before our
+`ready()` runs snapshots the router list without us in it, and the router then silently never
+applies — no error, no warning, tables quietly landing in the wrong database. Middleware does not
+have that problem because Django assembles that chain at first request, long after `ready()`.
+
+A visible line in the consumer's settings cannot fail that way, and they are already editing that
+block for the app and the alias.
 
 > **Working assumption — not locked in.** Whether the library ships an `archive_database(GAME_DIR)`
 > helper that collapses entry 2 to one line and resolves a `DATABASE_URL_ARCHIVE` override for
 > Postgres.
 
-> **Working assumption — not locked in.** The alias name. `archive` reads better in code;
-> `evennia_archive` would match the sibling convention where a router's alias equals its app label.
+**The alias is `archive`**, and the app is `evennia_archive`. Sibling routers use one name for both,
+which is why `ArchiveRouter` carries `app_label` and `alias` as separate attributes — conflating them
+would route the library's own models to an alias that does not exist.
 
 ## Migrating the archive
 

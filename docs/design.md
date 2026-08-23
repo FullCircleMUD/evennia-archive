@@ -65,15 +65,19 @@ serialised export format would have to unpickle every value, which needs a class
 consumer-defined classes, and ongoing maintenance as new attributes appear. A schema clone captures a
 new attribute automatically, with no code change and nothing to keep in step.
 
-> **Unknown — needs a spike.** How the second database is declared and migrated is not established.
-> Open: whether a database router is required at all; whether `migrate --database archive` builds the
-> full Evennia schema into the alias; how a consumer declares the alias without the library reaching
-> into their settings; and how this behaves when other apps in the consumer's project already have
-> routers of their own.
->
-> A model-based router cannot route *reads and writes* here, because both databases hold the same
-> models — there is no model-level fact distinguishing a live character from an archived one. Access
-> is therefore explicit via `.using()`. Any router would exist only to control `allow_migrate`.
+**A model-based router cannot route reads and writes here.** Both databases hold the same models, so
+there is no model-level fact distinguishing a live character from an archived one — nothing for
+`db_for_read` to branch on. Access to archived rows is therefore explicit, via `.using("archive")`.
+The router's job for Evennia's tables is `allow_migrate` and nothing else.
+
+The alias is declared by the consumer and the schema is built by a second migrate call. Both are
+documented in [archive-settings.md](archive-settings.md), and the demo gamedir under `examples/` uses
+that document verbatim so the instructions are what gets tested.
+
+> **Unknown — needs a spike.** How this behaves in a project whose *other* apps already have routers.
+> Reading FCM's suggests it is fine — a router of that shape answers `False` for its own app against
+> the archive and `None` for everything else, which both keeps its tables out and lets Evennia's in —
+> but that is reasoning from source, not a test. The demo gamedir has no other routers to exercise it.
 
 ## The library's own table
 
@@ -134,9 +138,12 @@ differences that matter:
 Everything else transfers unchanged — including returning `None` to defer, which is what lets it
 coexist with a consumer's own routers rather than fighting them.
 
-> **Unknown — needs a spike.** Whether the library appends its own router from `AppConfig.ready()`,
-> as `evennia-shards` does for middleware, or whether the consumer declares it. See
-> [archive-settings.md](archive-settings.md).
+**The consumer declares the router**, alongside the app and the alias. The library does not reach
+into their settings to append it. `evennia-shards` does inject settings from `AppConfig.ready()`, but
+`DATABASE_ROUTERS` is the wrong setting to do it to: `django.db.router.routers` is a
+`cached_property`, so anything that touches the ORM before `ready()` runs snapshots the list without
+us in it and the router silently never applies. A visible line in the consumer's settings cannot fail
+that way. See [archive-settings.md](archive-settings.md).
 
 ## Identity
 
@@ -413,8 +420,7 @@ Collected from the boxes above, so they can be worked through deliberately.
 
 **Spikes:**
 
-1. Whether the library appends its own router from `AppConfig.ready()`, or the consumer declares it
-   in their settings.
+1. Behaviour alongside a consumer's existing routers — reasoned from source, never run.
 2. Whether attribute lookup behaves identically against a non-default alias. The query shape is
    ordinary Django, but the pickled-value comparison is untested across `.using()`.
 3. The full set of Evennia packed markers, from `dbserialize`.
