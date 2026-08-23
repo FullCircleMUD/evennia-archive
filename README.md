@@ -5,10 +5,10 @@ without losing your players.
 
 ## Status
 
-**Working, but not published and not yet used by a real game.** Objects and accounts can be archived
-and restored, with identity surviving and dbrefs deliberately not. `find()` and `delete()` are not
-written yet, and nothing has been tested on PostgreSQL. See [docs/progress.md](docs/progress.md) for
-what exists and what proves it.
+**Working, but not published and not yet used by a real game.** All four calls are built and tested —
+objects and accounts can be archived, found, restored and deleted, with identity surviving and dbrefs
+deliberately not. References between objects are dropped rather than rebuilt, and nothing has been
+tested on PostgreSQL. See [docs/progress.md](docs/progress.md) for what exists and what proves it.
 
 ## The problem it solves
 

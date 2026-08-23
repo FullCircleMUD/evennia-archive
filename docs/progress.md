@@ -13,7 +13,9 @@ rebuilt one. Not published, and not yet used by a consumer game.
 - `ArchivableMixin` — mints an `archive_id` at creation and never changes it
 - `ArchiveRecord` and `ArchiveRouter` — the index into the archive, and what keeps it there
 - `archive(obj)` — copies an object in, as an upsert
+- `find(key, value, model=None)` — archive identifiers of objects matching an attribute
 - `restore(archive_id)` — rebuilds it in the live database, stripped of dbrefs
+- `delete(archive_id)` — removes an archived copy and its record
 
 **What proves it**
 
@@ -35,11 +37,14 @@ from the live database, and restores it with key, attributes, tags and identity 
 *different* primary key — identity survives, dbrefs do not, which is the whole design in one
 assertion.
 
-**Test suite: 30 tests, all passing.**
+**Test suite: 45 tests, all passing.**
+
+Every call is a plain synchronous function — the library imports no Twisted and assumes no reactor,
+because a management command, a migration and a test have none. Dispatching off the reactor is the
+consumer's decision, and `find()` is the one that genuinely needs it.
 
 **What does not exist yet**
 
-- `find()` and `delete()`
 - Reference translation. Live-database foreign keys are dropped rather than rebuilt, so an archived
   object knows its own state and nothing about what it was attached to. This needs the disposition
   table described in [design.md](design.md).

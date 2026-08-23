@@ -10,12 +10,20 @@ from django.conf import settings
 from evennia.accounts.accounts import DefaultAccount
 from evennia.accounts.models import AccountDB
 from evennia.objects.models import ObjectDB
+from evennia.typeclasses.models import Attribute
 from evennia.objects.objects import DefaultObject
 from evennia.utils.create import create_account, create_object
 from evennia.utils.test_resources import BaseEvenniaTest
 
 import evennia_archive
-from evennia_archive.api import NotArchivable, NotArchived, archive, restore
+from evennia_archive.api import (
+    NotArchivable,
+    NotArchived,
+    archive,
+    delete,
+    find,
+    restore,
+)
 from evennia_archive.mixins import ARCHIVE_ID_KEY, ArchivableMixin
 from evennia_archive.models import ArchiveRecord
 
@@ -303,3 +311,131 @@ class TestAccountRoundTrip(BaseEvenniaTest):
         record = archive(account)
         account.delete()
         self.assertNotEqual(restore(archive_id).pk, record.archived_pk)
+
+
+class TestFind(BaseEvenniaTest):
+    """find() locates archive identifiers by attribute."""
+
+    databases = {"default", "archive"}
+
+    def _archived_object(self, key="subject", **attrs):
+        obj = create_object(ArchivableTestObject, key=key)
+        for name, value in attrs.items():
+            obj.attributes.add(name, value)
+        archive(obj)
+        return obj.archive_id
+
+    def test_finds_nothing_in_an_empty_archive(self):
+        self.assertEqual(find("wallet", "rXYZ"), [])
+
+    def test_finds_by_unpickled_attribute(self):
+        archive_id = self._archived_object()
+        # archive_id itself is stored with strattr, so this exercises the
+        # db_strvalue half of the query.
+        self.assertEqual(find(ARCHIVE_ID_KEY, archive_id), [archive_id])
+
+    def test_finds_by_pickled_attribute(self):
+        archive_id = self._archived_object(level=12)
+        self.assertEqual(find("level", 12), [archive_id])
+
+    def test_pickled_match_is_type_sensitive(self):
+        # Documented behaviour rather than a defect: the same logical
+        # value of a different type pickles to different bytes.
+        self._archived_object(level=12)
+        self.assertEqual(find("level", "12"), [])
+
+    def test_returns_every_match(self):
+        first = self._archived_object(key="a", cohort="founder")
+        second = self._archived_object(key="b", cohort="founder")
+        self.assertCountEqual(find("cohort", "founder"), [first, second])
+
+    def test_key_and_value_must_be_the_same_attribute(self):
+        # Chaining two filters would let an object match when one
+        # attribute has the key and a different one has the value.
+        self._archived_object(level=12, other="founder")
+        self.assertEqual(find("level", "founder"), [])
+
+    def test_searches_accounts_and_objects_together(self):
+        obj_id = self._archived_object(cohort="founder")
+        account = create_account(
+            "rowan", "rowan@example.com", "sekritpw", typeclass=ArchivableTestAccount
+        )
+        account.attributes.add("cohort", "founder")
+        archive(account)
+        self.assertCountEqual(find("cohort", "founder"), [obj_id, account.archive_id])
+
+    def test_model_narrows_the_search(self):
+        self._archived_object(cohort="founder")
+        account = create_account(
+            "rowan", "rowan@example.com", "sekritpw", typeclass=ArchivableTestAccount
+        )
+        account.attributes.add("cohort", "founder")
+        archive(account)
+        self.assertEqual(
+            find("cohort", "founder", model="accountdb"), [account.archive_id]
+        )
+
+
+class TestDelete(BaseEvenniaTest):
+    """delete() removes an archived copy and its record."""
+
+    databases = {"default", "archive"}
+
+    def _archived(self):
+        obj = create_object(ArchivableTestObject, key="Rowan")
+        obj.attributes.add("level", 12)
+        obj.tags.add("veteran", category="rank")
+        archive(obj)
+        return obj
+
+    def test_unknown_identity_is_quiet(self):
+        # The natural caller is a delete hook, which fires for objects
+        # that were never archived. Raising there would break it.
+        self.assertFalse(delete(uuid.uuid4()))
+
+    def test_removes_the_copy_and_the_record(self):
+        obj = self._archived()
+        self.assertTrue(delete(obj.archive_id))
+        self.assertEqual(ArchiveRecord.objects.using("archive").count(), 0)
+        self.assertEqual(ObjectDB.objects.using("archive").count(), 0)
+
+    def test_removes_the_archived_attributes(self):
+        obj = self._archived()
+        delete(obj.archive_id)
+        self.assertEqual(Attribute.objects.using("archive").count(), 0)
+
+    def test_leaves_the_live_object_alone(self):
+        obj = self._archived()
+        delete(obj.archive_id)
+        self.assertTrue(ObjectDB.objects.filter(pk=obj.pk).exists())
+        self.assertEqual(obj.db.level, 12)
+
+    def test_deleted_identity_can_no_longer_be_restored(self):
+        obj = self._archived()
+        archive_id = obj.archive_id
+        delete(archive_id)
+        obj.delete()
+        with self.assertRaises(NotArchived):
+            restore(archive_id)
+
+    def test_is_idempotent(self):
+        obj = self._archived()
+        self.assertTrue(delete(obj.archive_id))
+        self.assertFalse(delete(obj.archive_id))
+
+    def test_shared_tags_survive_a_delete(self):
+        first = self._archived()
+        second = create_object(ArchivableTestObject, key="Other")
+        second.tags.add("veteran", category="rank")
+        archive(second)
+
+        delete(first.archive_id)
+
+        record = ArchiveRecord.objects.using("archive").get(pk=second.archive_id)
+        through = ObjectDB.db_tags.through
+        self.assertEqual(
+            through.objects.using("archive")
+            .filter(objectdb_id=record.archived_pk)
+            .count(),
+            1,
+        )

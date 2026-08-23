@@ -19,10 +19,10 @@ For the design wiki, read [docs/INDEX.md](docs/INDEX.md).
 
 ## Project status
 
-**Working, unpublished, unused.** Identity, the archive database, `archive()` and `restore()` are
-built and tested; the round trip closes for both objects and accounts. `find()` and `delete()` are
-not written, references are dropped rather than translated, and nothing has run on PostgreSQL. For
-current state read [docs/progress.md](docs/progress.md).
+**Working, unpublished, unused.** All four calls — `archive()`, `find()`, `restore()`, `delete()` —
+are built and tested, and the round trip closes for both objects and accounts. References between
+objects are dropped rather than translated, and nothing has run on PostgreSQL. For current state read
+[docs/progress.md](docs/progress.md).
 
 ## Where to read first
 

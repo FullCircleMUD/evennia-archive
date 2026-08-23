@@ -242,12 +242,10 @@ Two calls. Everything else — when, how often, in response to what — belongs 
 
 ```python
 archive(obj)                                                       # obj must carry the mixin
-find(attribute, value)                                             # → [archive_id, ...]
+find(key, value, model=None)                                       # → [archive_id, ...]
 restore(archive_id, return_object=True)
 delete(archive_id)                                                 # removes the archived copy
 ```
-
-*Parameter spellings may shift when the code is written; the semantics below are settled.*
 
 `archive()` takes an object and copies it. It does not know or care whether that object is a
 character, an account, a ship or a guild hall.

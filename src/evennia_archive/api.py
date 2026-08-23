@@ -1,9 +1,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """The library's public operations.
 
-Four calls, of which one is implemented so far:
+Four calls:
 
-    archive(obj)   copy an object into the archive
+    archive(obj)              copy an object into the archive
+    find(key, value)          archive ids of objects matching an attribute
+    restore(archive_id)       rebuild one in the live database
+    delete(archive_id)        remove an archived copy
 
 Everything about *when* to call them belongs to the consumer. The library
 ships no scheduler, no hooks and no triggers.
@@ -19,6 +22,7 @@ lives in the design doc rather than here so there is one copy of it.
 """
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from evennia.typeclasses.models import Attribute, Tag
 
@@ -95,6 +99,35 @@ def _link_fields(through, owner_model, target_model):
     return owner, target
 
 
+def _purge_attributes(db_model, archived_pk):
+    """Delete an archived row's attributes and the links to them.
+
+    Attributes are owned outright by the row they hang off, so both the
+    links and the Attribute rows go.
+    """
+    through = db_model.db_attributes.through
+    owner, target = _link_fields(through, db_model, Attribute)
+
+    links = through.objects.using(ARCHIVE_ALIAS).filter(**{f"{owner}_id": archived_pk})
+    Attribute.objects.using(ARCHIVE_ALIAS).filter(
+        pk__in=links.values_list(f"{target}_id", flat=True)
+    ).delete()
+    links.delete()
+
+
+def _purge_tag_links(db_model, archived_pk):
+    """Detach an archived row from its tags, leaving the tags themselves.
+
+    Tags are shared rows — several objects point at one — so deleting the
+    tag because one holder went away would strip it from the others.
+    """
+    through = db_model.db_tags.through
+    owner, _ = _link_fields(through, db_model, Tag)
+    through.objects.using(ARCHIVE_ALIAS).filter(
+        **{f"{owner}_id": archived_pk}
+    ).delete()
+
+
 def _replace_attributes(source, db_model, archived_pk):
     """Mirror the source's attribute set onto the archived row.
 
@@ -110,11 +143,7 @@ def _replace_attributes(source, db_model, archived_pk):
     through = db_model.db_attributes.through
     owner, target = _link_fields(through, db_model, Attribute)
 
-    links = through.objects.using(ARCHIVE_ALIAS).filter(**{f"{owner}_id": archived_pk})
-    Attribute.objects.using(ARCHIVE_ALIAS).filter(
-        pk__in=links.values_list(f"{target}_id", flat=True)
-    ).delete()
-    links.delete()
+    _purge_attributes(db_model, archived_pk)
 
     for attr in source.db_attributes.all():
         copied = Attribute.objects.using(ARCHIVE_ALIAS).create(
@@ -142,9 +171,7 @@ def _replace_tags(source, db_model, archived_pk):
     through = db_model.db_tags.through
     owner, target = _link_fields(through, db_model, Tag)
 
-    through.objects.using(ARCHIVE_ALIAS).filter(
-        **{f"{owner}_id": archived_pk}
-    ).delete()
+    _purge_tag_links(db_model, archived_pk)
 
     for tag in source.db_tags.all():
         archived_tag, _ = Tag.objects.using(ARCHIVE_ALIAS).get_or_create(
@@ -353,3 +380,110 @@ def _return_as(db_model, live_pk, return_object):
         return obj
     obj.flush_from_cache(force=True)
     return live_pk
+
+
+def _model_names_in_archive(model=None):
+    """Which archived models a search should cover."""
+    if model is not None:
+        return [model if isinstance(model, str) else model.__name__.lower()]
+    return list(
+        ArchiveRecord.objects.using(ARCHIVE_ALIAS)
+        .values_list("archived_model", flat=True)
+        .distinct()
+    )
+
+
+def find(key, value, model=None):
+    """Archive identifiers of objects whose ``key`` attribute holds ``value``.
+
+    Returns a list, because the library cannot know whether a consumer's
+    chosen attribute is unique. Choosing between several matches — or
+    knowing there can only be one and taking it — is theirs.
+
+    ``model`` narrows the search to one archived model ("accountdb",
+    "objectdb", or the class itself). Left out, every model the archive
+    holds is searched.
+
+    **Wrap this in deferToThread.** It is the one call here that can block
+    long enough to be felt by every connected player; the reasons are in
+    docs/design.md § find() is the expensive call — defer it.
+
+    A pickled comparison is type-sensitive, and matching the stored type
+    is the caller's job: ``find("level", 12)`` matches an attribute stored
+    as the integer 12, while ``find("level", "12")`` matches nothing, and
+    does so silently. The library cannot know what type an attribute holds
+    and will not guess, because a wrong guess is a false match rather than
+    an error.
+    """
+    found = []
+    for model_name in _model_names_in_archive(model):
+        db_model = _model_named(model_name)
+
+        # One filter() call, not two chained. Conditions on a
+        # multi-valued relation only apply to the *same* related row when
+        # they share a filter() — split them and an object matches if any
+        # attribute has the key and any other has the value.
+        #
+        # Matching either column removes the need for a storage-mode
+        # flag: strattr sets db_strvalue and leaves db_value null, and a
+        # normal attribute is the reverse.
+        matches = (
+            db_model.objects.using(ARCHIVE_ALIAS)
+            .filter(
+                Q(db_attributes__db_key=key)
+                & (
+                    Q(db_attributes__db_strvalue=value)
+                    | Q(db_attributes__db_value=value)
+                )
+            )
+            .values_list("pk", flat=True)
+        )
+
+        # The archived row does not need reading for its identity —
+        # ArchiveRecord already maps model and key to it.
+        found.extend(
+            ArchiveRecord.objects.using(ARCHIVE_ALIAS)
+            .filter(archived_model=model_name, archived_pk__in=list(matches))
+            .values_list("archive_id", flat=True)
+        )
+
+    return [str(archive_id) for archive_id in found]
+
+
+def delete(archive_id):
+    """Remove an archived copy and the record pointing at it.
+
+    Returns True if something was deleted, False if the identity was not
+    in the archive.
+
+    A hard delete, not a flag. A soft-deleted row would make correctness
+    depend on every read remembering a filter, and forgetting it once
+    resurrects objects a player chose to destroy.
+
+    Idempotent, and deliberately quiet about an identity it does not
+    hold: the natural caller is a consumer's own delete hook, which fires
+    for objects that were never archived in the first place.
+
+    Note that not calling this is a choice with a consequence — archived
+    copies outlive the objects they came from and will be restored. See
+    docs/design.md § Deletion is offered, not mandated.
+    """
+    archive_id = str(archive_id)
+
+    with transaction.atomic(using=ARCHIVE_ALIAS):
+        record = (
+            ArchiveRecord.objects.using(ARCHIVE_ALIAS).filter(pk=archive_id).first()
+        )
+        if record is None:
+            return False
+
+        db_model = _model_named(record.archived_model)
+        _purge_attributes(db_model, record.archived_pk)
+        _purge_tag_links(db_model, record.archived_pk)
+        db_model.objects.using(ARCHIVE_ALIAS).filter(pk=record.archived_pk).delete()
+
+        # The bookkeeping row goes with the copy. Leaving it behind would
+        # be a soft delete through the back door, with a last_archived
+        # pointing at nothing.
+        ArchiveRecord.objects.using(ARCHIVE_ALIAS).filter(pk=archive_id).delete()
+        return True
