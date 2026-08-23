@@ -1,0 +1,14 @@
+# Demo gamedir for evennia-archive.
+#
+# Run from THIS directory — pip resolves relative paths against the current
+# working directory, not against this file:
+#
+#     python -m venv venv
+#     source venv/bin/activate          # Windows: .\venv\Scripts\Activate.ps1
+#     pip install -r requirements.txt
+#
+# The library is installed editable from the repo root two levels up, so
+# changes to src/evennia_archive/ take effect without reinstalling.
+
+evennia
+-e ../..
