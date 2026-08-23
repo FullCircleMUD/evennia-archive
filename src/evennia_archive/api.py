@@ -22,9 +22,26 @@ from django.db import transaction
 from django.utils import timezone
 from evennia.typeclasses.models import Attribute, Tag
 
+from .mixins import ARCHIVE_ID_KEY
 from .models import ArchiveRecord
 
 ARCHIVE_ALIAS = "archive"
+
+
+def _model_named(model_name):
+    """The Evennia db model a record's archived_model names.
+
+    Matched on the bare model name, which follows Evennia's own
+    convention on Attribute.db_model ("objectdb", "accountdb"). The
+    limitation that comes with it: a consumer whose own app defines a
+    model of the same name would be ambiguous here.
+    """
+    from django.apps import apps
+
+    for model in apps.get_models():
+        if model.__name__.lower() == model_name:
+            return model
+    raise LookupError(f"no model named {model_name!r}")
 
 # Foreign keys into the live database. Dropped rather than copied — a
 # primary key means nothing across two databases. Rebuilding the
@@ -205,3 +222,135 @@ def archive(obj):
             },
         )
         return record
+
+
+class NotArchived(LookupError):
+    """Raised when nothing in the archive carries the given identity."""
+
+
+def _archived_values(db_model, archived_pk):
+    """The archived row's column values, as a plain dict.
+
+    values(), not an instance — see docs/design.md § The archive holds
+    rows, not objects.
+    """
+    values = (
+        db_model.objects.using(ARCHIVE_ALIAS).filter(pk=archived_pk).values().first()
+    )
+    if values is None:
+        return None
+    values.pop("id", None)
+    return values
+
+
+def _restore_attributes(db_model, archived_pk, live_pk):
+    """Recreate the archived attribute set on the restored object."""
+    through = db_model.db_attributes.through
+    owner, target = _link_fields(through, db_model, Attribute)
+
+    archived_ids = (
+        through.objects.using(ARCHIVE_ALIAS)
+        .filter(**{f"{owner}_id": archived_pk})
+        .values_list(f"{target}_id", flat=True)
+    )
+    for row in (
+        Attribute.objects.using(ARCHIVE_ALIAS).filter(pk__in=list(archived_ids)).values()
+    ):
+        row.pop("id", None)
+        restored = Attribute.objects.create(**row)
+        through.objects.create(
+            **{f"{owner}_id": live_pk, f"{target}_id": restored.pk}
+        )
+
+
+def _restore_tags(db_model, archived_pk, live_pk):
+    """Reattach the archived tags, reusing live tags where they exist."""
+    through = db_model.db_tags.through
+    owner, target = _link_fields(through, db_model, Tag)
+
+    archived_ids = (
+        through.objects.using(ARCHIVE_ALIAS)
+        .filter(**{f"{owner}_id": archived_pk})
+        .values_list(f"{target}_id", flat=True)
+    )
+    for row in Tag.objects.using(ARCHIVE_ALIAS).filter(pk__in=list(archived_ids)).values():
+        row.pop("id", None)
+        data = row.pop("db_data", None)
+        tag, _ = Tag.objects.get_or_create(**row, defaults={"db_data": data})
+        through.objects.create(**{f"{owner}_id": live_pk, f"{target}_id": tag.pk})
+
+
+def _live_pk_for(db_model, archive_id):
+    """The primary key of a live object already carrying this identity."""
+    return (
+        db_model.objects.filter(
+            db_attributes__db_key=ARCHIVE_ID_KEY,
+            db_attributes__db_strvalue=archive_id,
+        )
+        .values_list("pk", flat=True)
+        .first()
+    )
+
+
+def _as_pk(value):
+    return getattr(value, "pk", value)
+
+
+def restore(archive_id, location=None, home=None, return_object=True):
+    """Recreate an archived object in the live database.
+
+    Takes an identifier rather than an object, because the object does
+    not exist yet. Returns the restored object, or its primary key when
+    ``return_object`` is False.
+
+    Location is set at insert rather than afterwards, so no movement
+    hooks fire on an object that did not move. Left unset it is None —
+    a legal Evennia state meaning "nowhere" — because where a restored
+    object belongs is a game decision this library does not make.
+
+    Idempotent: restoring an identity that is already live returns the
+    existing object rather than making a second copy.
+    """
+    archive_id = str(archive_id)
+    record = ArchiveRecord.objects.using(ARCHIVE_ALIAS).filter(pk=archive_id).first()
+    if record is None:
+        raise NotArchived(f"nothing archived under {archive_id!r}")
+
+    db_model = _model_named(record.archived_model)
+    values = _archived_values(db_model, record.archived_pk)
+    if values is None:
+        raise NotArchived(
+            f"{archive_id!r} points at {record.archived_model} row "
+            f"{record.archived_pk}, which is not in the archive"
+        )
+
+    existing_pk = _live_pk_for(db_model, archive_id)
+    if existing_pk is not None:
+        return _return_as(db_model, existing_pk, return_object)
+
+    values["db_location_id"] = _as_pk(location)
+    values["db_home_id"] = _as_pk(home)
+
+    with transaction.atomic():
+        # bulk_create for the same reason archive() uses it: a plain
+        # create() fires Evennia's creation hooks, which would run the
+        # typeclass's setup over the top of the state we are restoring —
+        # including minting a fresh archive_id.
+        # See docs/design.md § The archive holds rows, not objects.
+        live_pk = db_model.objects.bulk_create([db_model(**values)])[0].pk
+        _restore_attributes(db_model, record.archived_pk, live_pk)
+        _restore_tags(db_model, record.archived_pk, live_pk)
+
+    ArchiveRecord.objects.using(ARCHIVE_ALIAS).filter(pk=archive_id).update(
+        last_restored=timezone.now()
+    )
+    return _return_as(db_model, live_pk, return_object)
+
+
+def _return_as(db_model, live_pk, return_object):
+    """Hand back the object, or evict it and hand back its key."""
+    obj = db_model.objects.get(pk=live_pk)
+    if return_object:
+        return obj
+    obj.flush_from_cache(force=True)
+    return live_pk

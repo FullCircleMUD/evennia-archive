@@ -13,7 +13,7 @@ from evennia.utils.create import create_object
 from evennia.utils.test_resources import BaseEvenniaTest
 
 import evennia_archive
-from evennia_archive.api import NotArchivable, archive
+from evennia_archive.api import NotArchivable, NotArchived, archive, restore
 from evennia_archive.mixins import ARCHIVE_ID_KEY, ArchivableMixin
 from evennia_archive.models import ArchiveRecord
 
@@ -162,3 +162,77 @@ class TestArchive(BaseEvenniaTest):
 
         copy = ObjectDB.objects.using("archive").get(pk=record.archived_pk)
         self.assertIsNone(copy.db_location_id)
+
+
+class TestRestore(BaseEvenniaTest):
+    """restore() rebuilds an archived object in the live database."""
+
+    databases = {"default", "archive"}
+
+    def _archive_then_wipe(self, **attrs):
+        """Archive an object, then delete it — the rebuild scenario."""
+        obj = create_object(ArchivableTestObject, key="Rowan")
+        for key, value in attrs.items():
+            obj.attributes.add(key, value)
+        obj.tags.add("veteran", category="rank")
+        archive_id = obj.archive_id
+        archive(obj)
+        obj.delete()
+        return archive_id
+
+    def test_refuses_an_unknown_identity(self):
+        with self.assertRaises(NotArchived):
+            restore(uuid.uuid4())
+
+    def test_round_trip_restores_the_object(self):
+        archive_id = self._archive_then_wipe(level=12, skills={"blades": 3})
+
+        restored = restore(archive_id)
+
+        self.assertEqual(restored.db_key, "Rowan")
+        self.assertEqual(restored.db.level, 12)
+        self.assertEqual(restored.db.skills, {"blades": 3})
+
+    def test_identity_survives_the_round_trip(self):
+        archive_id = self._archive_then_wipe()
+        self.assertEqual(restore(archive_id).archive_id, archive_id)
+
+    def test_tags_survive_the_round_trip(self):
+        archive_id = self._archive_then_wipe()
+        restored = restore(archive_id)
+        self.assertTrue(restored.tags.get("veteran", category="rank"))
+
+    def test_restored_object_has_a_new_primary_key(self):
+        # The point of the whole design: identity survives, dbrefs do not.
+        archive_id = self._archive_then_wipe()
+        record = ArchiveRecord.objects.using("archive").get(pk=archive_id)
+        self.assertNotEqual(restore(archive_id).pk, record.archived_pk)
+
+    def test_location_defaults_to_nowhere(self):
+        archive_id = self._archive_then_wipe()
+        self.assertIsNone(restore(archive_id).db_location_id)
+
+    def test_location_can_be_given(self):
+        room = create_object(DefaultObject, key="somewhere")
+        archive_id = self._archive_then_wipe()
+        self.assertEqual(restore(archive_id, location=room).db_location_id, room.pk)
+
+    def test_restoring_twice_does_not_duplicate(self):
+        archive_id = self._archive_then_wipe()
+        first = restore(archive_id)
+        second = restore(archive_id)
+        self.assertEqual(first.pk, second.pk)
+        self.assertEqual(ObjectDB.objects.filter(db_key="Rowan").count(), 1)
+
+    def test_return_object_false_yields_a_key(self):
+        archive_id = self._archive_then_wipe()
+        result = restore(archive_id, return_object=False)
+        self.assertIsInstance(result, int)
+
+    def test_restore_stamps_last_restored(self):
+        archive_id = self._archive_then_wipe()
+        before = ArchiveRecord.objects.using("archive").get(pk=archive_id)
+        self.assertIsNone(before.last_restored)
+        restore(archive_id)
+        after = ArchiveRecord.objects.using("archive").get(pk=archive_id)
+        self.assertIsNotNone(after.last_restored)

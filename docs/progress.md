@@ -3,6 +3,29 @@
 Reverse-chronological milestone log. Newest first. Each entry states what became true and what proves
 it.
 
+## 2026-08-23 — restore() ships; the round trip closes
+
+The second API call, and with it the first end-to-end proof of the premise. A test archives an
+object, **deletes it from the live database**, and restores it: key, attributes and tags all intact,
+and a **different primary key** from the one the archive holds. Identity survives, dbrefs do not,
+which is the whole design in one assertion.
+
+`restore()` takes an identifier because the object does not exist yet, and returns the restored
+object — or its primary key with `return_object=False`, which evicts the instance from the idmapper
+cache first, for consumers whose restoring process must not hold resident game objects.
+
+Location is set at insert rather than afterwards, so no movement hooks fire on an object that did not
+move. Unset, it is `None` — a legal Evennia state — because where a restored object belongs is a game
+decision the library does not make.
+
+Restoring an identity that is already live returns the existing object rather than making a second
+copy, so a re-run cannot duplicate.
+
+**Known limitation:** `archived_model` stores a bare model name, following Evennia's own convention
+on `Attribute.db_model`. A consumer whose app defines a model of the same name would be ambiguous.
+
+**Test suite: 26 tests, all passing.**
+
 ## 2026-08-23 — archive() ships, and two Evennia constraints surface
 
 First of the four API calls. `archive(obj)` copies an object into the archive as an upsert: read the
