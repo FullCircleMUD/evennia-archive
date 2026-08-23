@@ -284,6 +284,29 @@ than hidden:
 So a consumer whose identifying field lands in `strvalue` gets a lookup that scales; one using a
 normal attribute gets a table scan.
 
+### find() is the expensive call — defer it
+
+**Wrap `find()` in `deferToThread`.** It is the one call in this library that can block long enough to
+be felt by every connected player, and the reasons are structural rather than incidental:
+
+- **Neither value column is indexed.** `db_key` is, so a search narrows to attributes of that name
+  first — but if the key is a common one, the surviving set is still large and every row in it gets
+  compared.
+- **A pickled comparison is a blob comparison.** Where an unpickled search matches a short string,
+  a pickled one matches serialised bytes, and a large attribute value is a large comparison.
+- **It may search more than one model.** Left unnarrowed, the cost multiplies by the number of models
+  the archive holds.
+- **The archive may not be local.** It is expressly designed to be movable onto separate compute, at
+  which point every query carries network latency the live database does not.
+
+None of that is a problem when it runs on a worker thread, and all of it is when it runs on the
+reactor. A consumer who defers nothing else should still defer this.
+
+For contrast, the others are cheap: `restore()` and `delete()` resolve through `ArchiveRecord`'s
+primary key, and `archive()` writes a bounded number of rows for one object. `restore()` does carry
+one attribute lookup of its own — the check that stops a re-run duplicating — but that narrows on
+`archive_id`, which is unpickled and matches at most one row.
+
 Implementation notes for when this is written:
 
 - **Evennia's `get_by_attribute()` cannot be used directly.** It is a *manager* method ending in
@@ -294,8 +317,26 @@ Implementation notes for when this is written:
   off that same object. The second hop wants a `values_list` join rather than loading the objects,
   so that searching the archive does not instantiate archived objects on the searching process.
 
-> **Working assumption — not locked in.** The signature, and whether `find()` takes a category or an
-> explicit `strvalue`/`value` choice, or infers it.
+```python
+find(key, value, model=None)
+```
+
+**No storage mode to choose.** An attribute stored with `strattr` has `db_strvalue` set and
+`db_value` null; a normal one is the reverse. So the query matches *either* column and is correct
+whichever way the consumer stored it — one query, no mode flag, nothing for a caller to get wrong.
+
+**`model` is optional.** The archive knows which models it holds, because `ArchiveRecord.archived_model`
+records them, so an unnarrowed search covers all of them. Narrowing is an optimisation the consumer
+can apply when they know — a game searching by wallet address knows it wants accounts.
+
+**A pickled comparison is type-sensitive, and that is the caller's to get right.** `find("level", 12)`
+matches an attribute stored as the integer 12; `find("level", "12")` matches nothing, silently. The
+library has no way to know what type an attribute holds, and guessing — coercing the term, or trying
+several types — would produce false matches quietly, which is worse than none. Search with a value of
+the type you stored.
+
+The library's own lookups are immune, because `archive_id` is stored unpickled and compared as a
+plain string. That was chosen for protocol stability; type-insensitivity is a second dividend.
 
 > **Unknown — needs a spike.** Whether attribute lookup behaves identically against a non-default
 > alias. The query shape is ordinary Django, but the pickled-value comparison has not been tested
@@ -437,6 +478,11 @@ The library ships no scheduler, no hooks and no triggers. All of the following a
 
 - **When to archive.** A logout hook, a periodic script, an admin command, a save point — the library
   is indifferent.
+- **Which thread it runs on.** Every call in this library is a plain synchronous function. It imports
+  no Twisted and assumes no reactor, because a management command, a migration and a test have none.
+  Dispatching off the reactor is the consumer's decision for the same reason scheduling is — and on
+  Evennia that means `threads.deferToThread(archive, obj)` at the callsite. **`find()` in particular
+  should be deferred; see below for why.**
 - **What to archive.** Which typeclasses carry the mixin, and which objects get passed to `archive()`.
 - **Failure handling.** What to log, what to retry, what to alarm on.
 - **Reconciliation.** Detecting archived objects with no live counterpart, or the reverse.
@@ -479,8 +525,7 @@ Collected from the boxes above, so they can be worked through deliberately.
 **Decisions:**
 
 1. How consumers declare dispositions.
-2. `find()`'s signature — whether it takes an explicit `strvalue`/`value` choice or infers it.
-3. Whether the library ships an `archive_database()` helper for the alias declaration.
+2. Whether the library ships an `archive_database()` helper for the alias declaration.
 
 **Not yet examined at all:**
 
