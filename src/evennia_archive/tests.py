@@ -210,14 +210,20 @@ class TestRestore(BaseEvenniaTest):
         record = ArchiveRecord.objects.using("archive").get(pk=archive_id)
         self.assertNotEqual(restore(archive_id).pk, record.archived_pk)
 
-    def test_location_defaults_to_nowhere(self):
-        archive_id = self._archive_then_wipe()
-        self.assertIsNone(restore(archive_id).db_location_id)
-
-    def test_location_can_be_given(self):
+    def test_restored_object_comes_back_stripped_of_dbrefs(self):
+        # The library's whole position on placement: every reference the
+        # object held was a key into a database that no longer exists, so
+        # it comes back holding none of them. Where it goes next is the
+        # consumer's decision.
         room = create_object(DefaultObject, key="somewhere")
-        archive_id = self._archive_then_wipe()
-        self.assertEqual(restore(archive_id, location=room).db_location_id, room.pk)
+        obj = create_object(ArchivableTestObject, key="Rowan", location=room)
+        archive_id = obj.archive_id
+        archive(obj)
+        obj.delete()
+
+        restored = restore(archive_id)
+        self.assertIsNone(restored.db_location_id)
+        self.assertIsNone(restored.db_home_id)
 
     def test_restoring_twice_does_not_duplicate(self):
         archive_id = self._archive_then_wipe()
@@ -297,15 +303,3 @@ class TestAccountRoundTrip(BaseEvenniaTest):
         record = archive(account)
         account.delete()
         self.assertNotEqual(restore(archive_id).pk, record.archived_pk)
-
-    def test_placement_is_refused_where_it_cannot_apply(self):
-        # Silently dropping a placement is how an object ends up
-        # somewhere nobody chose. Accounts have no location column, so
-        # asking for one is a caller error rather than a no-op.
-        room = create_object(DefaultObject, key="somewhere")
-        account = self._make()
-        archive_id = account.archive_id
-        archive(account)
-        account.delete()
-        with self.assertRaises(TypeError):
-            restore(archive_id, location=room)

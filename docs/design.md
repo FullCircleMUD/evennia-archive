@@ -2,8 +2,8 @@
 
 The whole design of `evennia-archive` in one document: what it holds, what it refuses to hold, the
 interface a consumer calls, and the reference-translation problem that is the substance of the work.
-It is written as the intended finished state rather than as a record of what is built, because nothing
-is built yet.
+It is written as the intended finished state rather than as a record of what is built. Much of it now
+is — see [progress.md](progress.md) for what exists and what proves it.
 
 ## How to read this document
 
@@ -243,7 +243,7 @@ Two calls. Everything else — when, how often, in response to what — belongs 
 ```python
 archive(obj)                                                       # obj must carry the mixin
 find(attribute, value)                                             # → [archive_id, ...]
-restore(archive_id, location=None, home=None, return_object=True)
+restore(archive_id, return_object=True)
 delete(archive_id)                                                 # removes the archived copy
 ```
 
@@ -412,19 +412,26 @@ database issued.
 
 ## Restore semantics
 
-A restored object is created with the location it is given. If none is given, it is created with
-**no location at all**.
+**A restored object comes back stripped of every dbref it once held** — location, home, destination,
+owning account. Those were primary keys into a database that has since been rebuilt, so they point at
+nothing, or worse, at whatever now happens to hold that key.
 
-`None` is a legal state in Evennia, not an error one: the object exists, it is queryable, it is simply
-nowhere. That makes it the honest default, because placement is a game decision the library has no
-business making. Falling back to `settings.DEFAULT_HOME` was considered and rejected — it resolves to
-Limbo, and Limbo is a game concept.
+`None` is a legal state in Evennia, not an error one: the object exists, it is queryable, it is
+simply nowhere. Nothing is at risk of being lost, because restore hands back the object itself.
 
-Nothing is at risk of being lost, because restore hands the caller a handle to the object. A consumer
-who already knows where the object belongs passes `location=`, which also avoids firing movement hooks
-on an object that did not move.
+**Where a restored object goes is entirely the consumer's business.** The library stores it and gives
+it back; deciding where it belongs and what it reattaches to is a game decision, and the consumer is
+better placed to make it than any library could be.
 
-`db_home` is treated the same way, with its own parameter.
+`restore()` therefore takes no placement arguments. It briefly did, and the reason they were removed
+is worth recording: `location` and `home` are `ObjectDB` concepts, and accounts have neither column —
+so the signature needed a check to refuse arguments it could not apply. Code that has to apologise for
+its own API is reporting that the API reached somewhere it should not have. Removing them deleted that
+branch and gave the consumer more control rather than less: they can set `obj.location` directly and
+fire no hooks, or call `move_to()` and fire them deliberately.
+
+Falling back to `settings.DEFAULT_HOME` was considered and rejected for the same reason — it resolves
+to Limbo, and Limbo is a game concept.
 
 ## What the consumer owns
 

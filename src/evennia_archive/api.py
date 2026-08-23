@@ -296,17 +296,19 @@ def _as_pk(value):
     return getattr(value, "pk", value)
 
 
-def restore(archive_id, location=None, home=None, return_object=True):
+def restore(archive_id, return_object=True):
     """Recreate an archived object in the live database.
 
     Takes an identifier rather than an object, because the object does
     not exist yet. Returns the restored object, or its primary key when
     ``return_object`` is False.
 
-    Location is set at insert rather than afterwards, so no movement
-    hooks fire on an object that did not move. Left unset it is None —
-    a legal Evennia state meaning "nowhere" — because where a restored
-    object belongs is a game decision this library does not make.
+    **The object comes back stripped of every dbref it once held** —
+    location, home, destination, owning account. Those are primary keys
+    into a database that has been rebuilt, so they mean nothing now.
+    Deciding where a restored object goes and what it reattaches to is
+    the consumer's business, not this library's. We store it and hand it
+    back; they place it.
 
     Idempotent: restoring an identity that is already live returns the
     existing object rather than making a second copy.
@@ -327,24 +329,6 @@ def restore(archive_id, location=None, home=None, return_object=True):
     existing_pk = _live_pk_for(db_model, archive_id)
     if existing_pk is not None:
         return _return_as(db_model, existing_pk, return_object)
-
-    # Placement is an ObjectDB concept. Accounts have neither column, so
-    # the arguments are applied only where they exist — and refused
-    # rather than ignored when a caller passes one that cannot apply,
-    # since silently dropping a placement is how an object ends up
-    # somewhere nobody chose.
-    columns = {field.attname for field in db_model._meta.concrete_fields}
-    for argument, column, value in (
-        ("location", "db_location_id", location),
-        ("home", "db_home_id", home),
-    ):
-        if column in columns:
-            values[column] = _as_pk(value)
-        elif value is not None:
-            raise TypeError(
-                f"{record.archived_model} has no {argument}; "
-                f"cannot restore with {argument}={value!r}"
-            )
 
     with transaction.atomic():
         # bulk_create for the same reason archive() uses it: a plain

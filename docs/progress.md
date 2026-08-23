@@ -3,6 +3,21 @@
 Reverse-chronological milestone log. Newest first. Each entry states what became true and what proves
 it.
 
+## 2026-08-23 — restore() drops its placement arguments
+
+`restore(archive_id, return_object=True)`. The `location` and `home` parameters are gone.
+
+The account round trip is what exposed them as wrong. Both are `ObjectDB` concepts and accounts have
+neither column, so the signature needed a check to refuse arguments it could not apply — code
+apologising for its own API. `design.md` had also been claiming that placement is a game decision the
+library has no business making, while taking a parameter for it.
+
+**A restored object now comes back stripped of every dbref it once held.** Where it goes is entirely
+the consumer's business: they can set `obj.location` directly and fire no hooks, or call `move_to()`
+and fire them deliberately. That is more control than the parameter gave them, not less.
+
+**Test suite: 30 tests, all passing.**
+
 ## 2026-08-23 — The round trip works on accounts too
 
 `AccountDB` now goes through the same cycle as `ObjectDB`: archived, deleted from the live database,
