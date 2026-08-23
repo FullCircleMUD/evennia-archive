@@ -98,10 +98,10 @@ key and it is already cached, the cached instance comes back instead — and any
 in the real game database. `copy.db_attributes.all().delete()` would then destroy a live character's
 attributes while looking like archive maintenance.
 
-This is not theoretical. It surfaced writing `archive()`: the test fixtures occupy low primary keys in
-the live database, the archived copy was given a low primary key too, and a read of the archived row
-returned a room called `"Room"` where a character called `"Rowan"` was expected. Had the keys not
-collided, the code would have passed its tests and destroyed data in production.
+This is reached in ordinary use, not at the edges. A fresh archive and a live database both start
+counting primary keys at 1, so collisions are the normal case rather than the unlucky one — a read
+for an archived character can hand back a room. And it is silent both ways: without a collision the
+same code passes its tests.
 
 **So: reads use `.values()` / `.values_list()`, writes use explicit querysets scoped with `.using()`,
 and many-to-many work goes at the through table directly** — reaching a row's own m2m manager means
@@ -423,15 +423,13 @@ simply nowhere. Nothing is at risk of being lost, because restore hands back the
 it back; deciding where it belongs and what it reattaches to is a game decision, and the consumer is
 better placed to make it than any library could be.
 
-`restore()` therefore takes no placement arguments. It briefly did, and the reason they were removed
-is worth recording: `location` and `home` are `ObjectDB` concepts, and accounts have neither column —
-so the signature needed a check to refuse arguments it could not apply. Code that has to apologise for
-its own API is reporting that the API reached somewhere it should not have. Removing them deleted that
-branch and gave the consumer more control rather than less: they can set `obj.location` directly and
-fire no hooks, or call `move_to()` and fire them deliberately.
+`restore()` therefore takes no placement arguments, and does not fall back to
+`settings.DEFAULT_HOME` — that resolves to Limbo, which is a game concept. `location` and `home` are
+`ObjectDB` concepts in any case: accounts have neither column, so an API carrying them would have to
+refuse arguments it could not apply.
 
-Falling back to `settings.DEFAULT_HOME` was considered and rejected for the same reason — it resolves
-to Limbo, and Limbo is a game concept.
+The consumer loses nothing by this. They can set `obj.location` directly and fire no hooks, or call
+`move_to()` and fire them deliberately — either is more control than a parameter would offer.
 
 ## What the consumer owns
 

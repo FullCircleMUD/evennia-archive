@@ -5,8 +5,10 @@ without losing your players.
 
 ## Status
 
-**Scaffold only — no library code yet.** The repository structure, packaging and test runner are in
-place; the design is in progress. See [docs/progress.md](docs/progress.md) for current state.
+**Working, but not published and not yet used by a real game.** Objects and accounts can be archived
+and restored, with identity surviving and dbrefs deliberately not. `find()` and `delete()` are not
+written yet, and nothing has been tested on PostgreSQL. See [docs/progress.md](docs/progress.md) for
+what exists and what proves it.
 
 ## The problem it solves
 

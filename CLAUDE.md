@@ -19,9 +19,10 @@ For the design wiki, read [docs/INDEX.md](docs/INDEX.md).
 
 ## Project status
 
-**Scaffold only.** Repository structure, packaging and the standalone test runner are in place. No
-library code is written and the public interface is not designed. For current state read
-[docs/progress.md](docs/progress.md).
+**Working, unpublished, unused.** Identity, the archive database, `archive()` and `restore()` are
+built and tested; the round trip closes for both objects and accounts. `find()` and `delete()` are
+not written, references are dropped rather than translated, and nothing has run on PostgreSQL. For
+current state read [docs/progress.md](docs/progress.md).
 
 ## Where to read first
 
@@ -39,9 +40,9 @@ Agreed in the design conversation of 2026-08-23. Every implementation decision m
    Wallet addresses, NFTs, banks, FCM typeclass names — all stay in FCM. Default to "consumer
    concern" when uncertain.
 3. **Mechanism here, policy in the consumer.** The library supplies row copy, reference discovery,
-   the disposition framework, scheduling and restore primitives. The consumer decides what to skip,
-   what each reference's disposition is, when rehydration is triggered, and where a restored
-   character lands.
+   the disposition framework and the restore primitives. It ships no scheduler, no hooks and no
+   triggers. The consumer decides what to archive, what each reference's disposition is, when any of
+   it runs, and where a restored object goes.
 4. **Test the object, never the library.** Optional capabilities are detected by asking the object
    whether it exposes what is needed — never by checking whether a sibling library is installed.
    Detecting a library is a hidden dependency wearing an optional one's clothes.
@@ -83,8 +84,8 @@ owner**. They are not a place to forward-design the system from first principles
 3. **Smaller is better.** Three discussed points captured faithfully beat three discussed points plus
    seven invented ones. Resist filling out sections "for completeness".
 
-This matters more here than in a mature library: almost nothing is decided yet, so almost everything
-written confidently would be invention.
+This matters more here than in a mature library: much is still open, so anything written confidently
+about an undecided part would be invention.
 
 ## Repository layout
 
@@ -96,13 +97,17 @@ evennia-archive/
 ├── pyproject.toml
 ├── runtests.py                # standalone test runner (no consumer gamedir needed)
 ├── docs/                      # design wiki (humans + LLMs)
+├── examples/
+│   └── demo_game/             # gamedir installed per docs/archive-settings.md
 ├── src/
 │   └── evennia_archive/       # library code (src layout)
+│       ├── api.py             # archive() / restore()
+│       ├── mixins.py          # ArchivableMixin
+│       ├── models.py          # ArchiveRecord
+│       ├── db_router.py       # ArchiveRouter
 │       └── tests.py           # unit tests (run via runtests.py)
 └── tests/                     # standalone test settings (test_settings.py, urls.py)
 ```
-
-`examples/` (demo gamedirs) and `docs/archive/` will be added when there is something to put in them.
 
 ## Tools and environment
 
