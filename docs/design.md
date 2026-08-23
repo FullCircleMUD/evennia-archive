@@ -45,10 +45,10 @@ That single sentence answers every future "why doesn't it restore X". It is also
 database backup** and not a substitute for one. A database restore gives you back the data, not the
 running system; so does this.
 
-> **Working assumption — not locked in.** Archival is **shallow**: the object's own row, its
-> attributes and its tags. Contained objects are not followed. A consumer who wants an inventory
-> archived calls `archive()` for each item. Deep archival would mean the library deciding how far a
-> containment tree extends, which is a game question.
+**Archival is shallow**: the object's own row, its attributes and its tags. Contained objects are not
+followed. `archive()` takes one object and copies that object, so a consumer who wants an inventory
+archived calls it for each item. Deep archival would mean the library deciding how far a containment
+tree extends and which parts of it matter, which is a game question wearing a library's clothes.
 
 Containment is the one case where location genuinely *is* unrecoverable state — "this was inside that
 chest". That is handled as a disposition rather than a special rule: if the container is also
@@ -190,9 +190,6 @@ consumer's MRO, so it cannot pick one.
 Both decisions are pinned by tests — the minted value must round-trip through `uuid.UUID` unchanged,
 and it must land in `db_strvalue` with `db_value` null.
 
-> **Working assumption — not locked in.** Consumers may register behaviour per typeclass. If so, the
-> lookup walks the **MRO** rather than matching the concrete class, so a consumer registering against
-> `MyCharacter` still matches `MyEliteCharacter`, and mixin composition behaves as expected.
 
 ## Public interface
 
@@ -205,8 +202,7 @@ restore(archive_id, location=None, home=None, return_object=True)
 delete(archive_id)                                                 # removes the archived copy
 ```
 
-> **Working assumption — not locked in.** Parameter *names* and the `location` / `home` arguments are
-> illustrative. The return behaviour described below is settled.
+*Parameter spellings may shift when the code is written; the semantics below are settled.*
 
 `archive()` takes an object and copies it. It does not know or care whether that object is a
 character, an account, a ship or a guild hall.
@@ -356,6 +352,10 @@ database issued.
 > **Working assumption — not locked in.** How a consumer declares dispositions is open — per
 > typeclass, per field, a registry, or defaults with overrides. What is agreed is that the *library*
 > does not decide them, because which references matter is a game question.
+>
+> If it turns out to be per typeclass, the lookup must walk the **MRO** rather than match the
+> concrete class, so a consumer registering against `MyCharacter` still matches `MyEliteCharacter`
+> and mixin composition behaves as expected.
 
 > **Unknown — needs a spike.** The full set of packed markers Evennia uses. `__packed_dbobj__` is
 > confirmed; `dbserialize` must be read for the rest. A missed marker is a reference that copies
@@ -429,8 +429,8 @@ Collected from the boxes above, so they can be worked through deliberately.
 **Decisions:**
 
 1. How consumers declare dispositions.
-2. Shallow versus deep archival.
-3. `find()`'s signature — whether it takes an explicit `strvalue`/`value` choice or infers it.
+2. `find()`'s signature — whether it takes an explicit `strvalue`/`value` choice or infers it.
+3. Whether the library ships an `archive_database()` helper for the alias declaration.
 
 **Not yet examined at all:**
 
