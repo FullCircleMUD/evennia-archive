@@ -7,9 +7,11 @@ import uuid
 from unittest import TestCase as PlainTestCase
 
 from django.conf import settings
+from evennia.accounts.accounts import DefaultAccount
+from evennia.accounts.models import AccountDB
 from evennia.objects.models import ObjectDB
 from evennia.objects.objects import DefaultObject
-from evennia.utils.create import create_object
+from evennia.utils.create import create_account, create_object
 from evennia.utils.test_resources import BaseEvenniaTest
 
 import evennia_archive
@@ -236,3 +238,74 @@ class TestRestore(BaseEvenniaTest):
         restore(archive_id)
         after = ArchiveRecord.objects.using("archive").get(pk=archive_id)
         self.assertIsNotNone(after.last_restored)
+
+
+class ArchivableTestAccount(ArchivableMixin, DefaultAccount):
+    """A minimal account typeclass carrying the mixin, for tests only."""
+
+
+class TestAccountRoundTrip(BaseEvenniaTest):
+    """The same round trip, on AccountDB rather than ObjectDB.
+
+    Accounts are the other half of what a consumer archives, and they
+    differ in ways that could break the mechanism: a different creation
+    hook, a unique username, and Django's PermissionsMixin bolted on.
+    """
+
+    databases = {"default", "archive"}
+
+    def _make(self, key="rowan"):
+        return create_account(
+            key, f"{key}@example.com", "sekritpw", typeclass=ArchivableTestAccount
+        )
+
+    def test_account_creation_mints_an_id(self):
+        # Covers at_account_creation, which the ObjectDB tests never reach.
+        self.assertTrue(self._make().archive_id)
+
+    def test_round_trip_restores_the_account(self):
+        account = self._make()
+        account.attributes.add("wallet", "rWMKPadPqT44LqfjTWqm4mrNgxDrSMcF3Z")
+        account.tags.add("founder", category="cohort")
+        archive_id = account.archive_id
+
+        archive(account)
+        account.delete()
+        self.assertFalse(AccountDB.objects.filter(username="rowan").exists())
+
+        restored = restore(archive_id)
+
+        self.assertEqual(restored.username, "rowan")
+        self.assertEqual(restored.email, "rowan@example.com")
+        self.assertEqual(
+            restored.db.wallet, "rWMKPadPqT44LqfjTWqm4mrNgxDrSMcF3Z"
+        )
+        self.assertTrue(restored.tags.get("founder", category="cohort"))
+        self.assertEqual(restored.archive_id, archive_id)
+
+    def test_record_names_the_account_model(self):
+        record = archive(self._make())
+        self.assertEqual(record.archived_model, "accountdb")
+
+    def test_copy_does_not_land_in_the_live_database(self):
+        archive(self._make())
+        self.assertEqual(AccountDB.objects.filter(username="rowan").count(), 1)
+
+    def test_restored_account_has_a_new_primary_key(self):
+        account = self._make()
+        archive_id = account.archive_id
+        record = archive(account)
+        account.delete()
+        self.assertNotEqual(restore(archive_id).pk, record.archived_pk)
+
+    def test_placement_is_refused_where_it_cannot_apply(self):
+        # Silently dropping a placement is how an object ends up
+        # somewhere nobody chose. Accounts have no location column, so
+        # asking for one is a caller error rather than a no-op.
+        room = create_object(DefaultObject, key="somewhere")
+        account = self._make()
+        archive_id = account.archive_id
+        archive(account)
+        account.delete()
+        with self.assertRaises(TypeError):
+            restore(archive_id, location=room)

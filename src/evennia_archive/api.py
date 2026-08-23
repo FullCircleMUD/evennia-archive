@@ -328,8 +328,23 @@ def restore(archive_id, location=None, home=None, return_object=True):
     if existing_pk is not None:
         return _return_as(db_model, existing_pk, return_object)
 
-    values["db_location_id"] = _as_pk(location)
-    values["db_home_id"] = _as_pk(home)
+    # Placement is an ObjectDB concept. Accounts have neither column, so
+    # the arguments are applied only where they exist — and refused
+    # rather than ignored when a caller passes one that cannot apply,
+    # since silently dropping a placement is how an object ends up
+    # somewhere nobody chose.
+    columns = {field.attname for field in db_model._meta.concrete_fields}
+    for argument, column, value in (
+        ("location", "db_location_id", location),
+        ("home", "db_home_id", home),
+    ):
+        if column in columns:
+            values[column] = _as_pk(value)
+        elif value is not None:
+            raise TypeError(
+                f"{record.archived_model} has no {argument}; "
+                f"cannot restore with {argument}={value!r}"
+            )
 
     with transaction.atomic():
         # bulk_create for the same reason archive() uses it: a plain

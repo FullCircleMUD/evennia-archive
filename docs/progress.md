@@ -3,6 +3,25 @@
 Reverse-chronological milestone log. Newest first. Each entry states what became true and what proves
 it.
 
+## 2026-08-23 — The round trip works on accounts too
+
+`AccountDB` now goes through the same cycle as `ObjectDB`: archived, deleted from the live database,
+restored with username, email, attributes, tags and identity intact, and a different primary key.
+Accounts are the other half of what a consumer archives, and they differ in ways that could have
+broken the mechanism — a different creation hook, a unique username, and Django's `PermissionsMixin`
+bolted on.
+
+This also closes the `at_account_creation` gap. The mixin's account-side hook had never been
+exercised, because every earlier test used an object.
+
+**One real bug it caught.** `restore()` set `db_location_id` and `db_home_id` unconditionally, which
+is `ObjectDB`'s shape — accounts have neither column and the restore raised `TypeError`. Placement is
+now applied only where the model has somewhere to put it, and **refused rather than ignored** when a
+caller passes one that cannot apply. Silently dropping a placement is how an object ends up somewhere
+nobody chose.
+
+**Test suite: 32 tests, all passing.**
+
 ## 2026-08-23 — restore() ships; the round trip closes
 
 The second API call, and with it the first end-to-end proof of the premise. A test archives an
