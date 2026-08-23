@@ -3,6 +3,37 @@
 Reverse-chronological milestone log. Newest first. Each entry states what became true and what proves
 it.
 
+## 2026-08-23 — archive() ships, and two Evennia constraints surface
+
+First of the four API calls. `archive(obj)` copies an object into the archive as an upsert: read the
+identity, find the `ArchiveRecord`, and either update the row it points at or insert a copy and record
+where it landed. Attributes and tags are replaced wholesale rather than diffed. All inside one
+transaction on the archive alias, so the pointer and its target cannot disagree.
+
+Writing it surfaced two constraints that govern the whole library, now in
+[design.md § The archive holds rows, not objects](design.md):
+
+**The idmapper is not database-aware.** Evennia's models are `SharedMemoryModel` and instances are
+cached by primary key alone, so `ObjectDB.objects.using("archive").get(pk=5)` can return the *live*
+object with pk 5. The first draft did exactly that and would have deleted a live character's
+attributes while appearing to maintain the archive.
+
+Found only because the test fixtures occupy low primary keys in the live database and the archived
+copy collided with one — a read for `"Rowan"` returned a room called `"Room"`. Without the collision
+it would have passed its tests. Worth remembering when deciding how isolated a test should be: the
+contamination is what caught it.
+
+**Evennia's creation hooks hang off `save()`.** A plain ORM `create()` in the archive fires
+`at_first_save` and therefore `at_object_creation`, so an archived copy ran its typeclass's creation
+logic — including this library's own identity minting. `bulk_create()` and queryset `update()` bypass
+it.
+
+References into the live database (`db_location`, `db_home`, `db_destination`, `db_account`) are
+dropped for now. Rebuilding them is the reference-translation work and needs a disposition table that
+does not exist yet.
+
+**Test suite: 16 tests, all passing.**
+
 ## 2026-08-23 — Identity landed, migration path proven end to end
 
 `ArchivableMixin` ships. Identity is locked: attribute key `archive_id`, value `str(uuid.uuid4())`

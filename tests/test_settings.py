@@ -28,13 +28,30 @@ os.makedirs(LOG_DIR, exist_ok=True)
 # Library under test
 INSTALLED_APPS = list(INSTALLED_APPS) + ["evennia_archive"]  # noqa: F405
 
-# In-memory test database
+# Two in-memory databases, mirroring a real consumer install: the game,
+# and the archive it copies into. Without the second alias and the router,
+# a test for archive() would write to `default` and pass for the wrong
+# reason.
+#
+# The TEST names are not decoration. Two aliases both saying ":memory:"
+# look like one database to Django's test runner, which then treats the
+# second as a mirror of the first — so the router would appear to work
+# while both aliases pointed at the same physical database. Distinct
+# shared-cache URIs keep them genuinely separate.
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": ":memory:",
+        "TEST": {"NAME": "file:evennia_archive_test_default?mode=memory&cache=shared"},
+    },
+    "archive": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": ":memory:",
+        "TEST": {"NAME": "file:evennia_archive_test_archive?mode=memory&cache=shared"},
     },
 }
+
+DATABASE_ROUTERS = ["evennia_archive.db_router.ArchiveRouter"]
 
 # Required Django bits
 SECRET_KEY = "test-only-secret"

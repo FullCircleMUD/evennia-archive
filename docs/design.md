@@ -79,6 +79,51 @@ that document verbatim so the instructions are what gets tested.
 > the archive and `None` for everything else, which both keeps its tables out and lets Evennia's in —
 > but that is reasoning from source, not a test. The demo gamedir has no other routers to exercise it.
 
+## The archive holds rows, not objects
+
+Two rules govern every operation that touches the archive. Both exist because Evennia's model layer
+assumes there is one database, and the archive is a second one wearing the same schema.
+
+### Never instantiate a row fetched from the archive
+
+Evennia's models are `SharedMemoryModel`, and the idmapper caches instances **by primary key alone**,
+with no idea which database a row came from. So this is not safe:
+
+```python
+copy = ObjectDB.objects.using("archive").get(pk=5)   # may be the LIVE object with pk 5
+```
+
+`.using()` steers the query; it does not steer the cache. If the live database has a row with that
+key and it is already cached, the cached instance comes back instead — and anything done to it lands
+in the real game database. `copy.db_attributes.all().delete()` would then destroy a live character's
+attributes while looking like archive maintenance.
+
+This is not theoretical. It surfaced writing `archive()`: the test fixtures occupy low primary keys in
+the live database, the archived copy was given a low primary key too, and a read of the archived row
+returned a room called `"Room"` where a character called `"Rowan"` was expected. Had the keys not
+collided, the code would have passed its tests and destroyed data in production.
+
+**So: reads use `.values()` / `.values_list()`, writes use explicit querysets scoped with `.using()`,
+and many-to-many work goes at the through table directly** — reaching a row's own m2m manager means
+having the instance, which is the unsafe thing.
+
+A useful test of any new archive code: if it holds a model instance loaded from the archive, it is
+wrong.
+
+### Never write through Evennia's save path
+
+Evennia's typeclass hooks hang off `TypedObject.save()`. A plain ORM `create()` fires `at_first_save`
+and therefore `at_object_creation` — so an archived copy would run its typeclass's creation logic,
+including this library's own identity minting, on a row that is a copy rather than a new object.
+
+**So: `bulk_create()` rather than `create()`, and queryset `update()` rather than `save()`.** Both
+issue SQL without going through `save()`.
+
+The principle underneath both rules is the same. **A copy is data, not an object.** It has no
+location, nothing puppets it, no scripts tick on it, and nothing should fire hooks at it. The moment
+the library treats an archived row as a live object, it stops being an archive and starts being a
+second game.
+
 ## The library's own table
 
 Alongside the cloned Evennia schema, the library owns exactly one table of its own — one row per

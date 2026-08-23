@@ -7,12 +7,15 @@ import uuid
 from unittest import TestCase as PlainTestCase
 
 from django.conf import settings
+from evennia.objects.models import ObjectDB
 from evennia.objects.objects import DefaultObject
 from evennia.utils.create import create_object
 from evennia.utils.test_resources import BaseEvenniaTest
 
 import evennia_archive
+from evennia_archive.api import NotArchivable, archive
 from evennia_archive.mixins import ARCHIVE_ID_KEY, ArchivableMixin
+from evennia_archive.models import ArchiveRecord
 
 
 class ArchivableTestObject(ArchivableMixin, DefaultObject):
@@ -70,3 +73,92 @@ class TestArchivableMixin(BaseEvenniaTest):
     def test_object_without_the_mixin_has_no_identity(self):
         plain = create_object(DefaultObject, key="plain")
         self.assertFalse(hasattr(plain, "archive_id"))
+
+
+class TestArchive(BaseEvenniaTest):
+    """archive() copies an object into the archive and records where."""
+
+    # Django only creates test databases for aliases a class declares.
+    # Without this the archive alias is never built and every query
+    # against it raises DatabaseOperationForbidden.
+    databases = {"default", "archive"}
+
+    def _make(self, key="subject", **kwargs):
+        return create_object(ArchivableTestObject, key=key, **kwargs)
+
+    def test_refuses_an_object_without_identity(self):
+        plain = create_object(DefaultObject, key="plain")
+        with self.assertRaises(NotArchivable):
+            archive(plain)
+
+    def test_creates_a_copy_in_the_archive(self):
+        obj = self._make(key="Rowan")
+        record = archive(obj)
+
+        key = ObjectDB.objects.using("archive").values_list(
+            "db_key", flat=True
+        ).get(pk=record.archived_pk)
+        self.assertEqual(key, "Rowan")
+        self.assertEqual(record.archived_model, "objectdb")
+
+    def test_copy_does_not_land_in_the_live_database(self):
+        obj = self._make(key="Rowan")
+        archive(obj)
+        # Two rows named Rowan in `default` would mean the copy was
+        # written to the wrong alias — the failure the router exists to
+        # prevent, and one that would otherwise look like success.
+        self.assertEqual(ObjectDB.objects.filter(db_key="Rowan").count(), 1)
+
+    def test_attributes_come_across(self):
+        obj = self._make()
+        obj.db.level = 12
+        obj.db.skills = {"blades": 3}
+        record = archive(obj)
+
+        copy = ObjectDB.objects.using("archive").get(pk=record.archived_pk)
+        values = {a.db_key: a.value for a in copy.db_attributes.all()}
+        self.assertEqual(values["level"], 12)
+        self.assertEqual(values["skills"], {"blades": 3})
+
+    def test_identity_comes_across(self):
+        obj = self._make()
+        record = archive(obj)
+        copy = ObjectDB.objects.using("archive").get(pk=record.archived_pk)
+        stored = {a.db_key: a.db_strvalue for a in copy.db_attributes.all()}
+        self.assertEqual(stored[ARCHIVE_ID_KEY], obj.archive_id)
+
+    def test_second_archive_updates_rather_than_duplicates(self):
+        obj = self._make(key="Rowan")
+        first = archive(obj)
+
+        obj.key = "Rowan the Grey"
+        obj.db.level = 20
+        second = archive(obj)
+
+        self.assertEqual(first.archived_pk, second.archived_pk)
+        self.assertEqual(ObjectDB.objects.using("archive").count(), 1)
+        self.assertEqual(ArchiveRecord.objects.using("archive").count(), 1)
+
+        key = ObjectDB.objects.using("archive").values_list(
+            "db_key", flat=True
+        ).get(pk=second.archived_pk)
+        self.assertEqual(key, "Rowan the Grey")
+
+    def test_removed_attributes_are_removed_from_the_copy(self):
+        obj = self._make()
+        obj.db.doomed = "here"
+        archive(obj)
+
+        del obj.db.doomed
+        record = archive(obj)
+
+        copy = ObjectDB.objects.using("archive").get(pk=record.archived_pk)
+        self.assertNotIn("doomed", [a.db_key for a in copy.db_attributes.all()])
+
+    def test_location_reference_is_dropped(self):
+        room = create_object(DefaultObject, key="somewhere")
+        obj = self._make(location=room)
+        record = archive(obj)
+
+        copy = ObjectDB.objects.using("archive").get(pk=record.archived_pk)
+        self.assertIsNone(copy.db_location_id)
