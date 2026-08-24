@@ -19,7 +19,9 @@ For the design wiki, read [docs/INDEX.md](docs/INDEX.md).
 
 ## Project status
 
-**Working, unpublished, unused.** All four calls — `archive()`, `find()`, `restore()`, `delete()` —
+**Working, published, not yet in production.** On PyPI as `evennia-archive` 0.1.0, and wired into
+FullCircleMUD on a branch — pinned in its requirements, `ArchivableMixin` on its account and
+character typeclasses — but not merged and not deployed. All four calls — `archive()`, `find()`, `restore()`, `delete()` —
 are built and tested, and the round trip closes for both objects and accounts. References between
 objects are dropped rather than translated, and nothing has run on PostgreSQL. For current state read
 [docs/progress.md](docs/progress.md).
