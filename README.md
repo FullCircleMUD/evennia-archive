@@ -5,10 +5,10 @@ without losing your players.
 
 ## Status
 
-**Working, but not published and not yet used by a real game.** All four calls are built and tested —
+**Working, not yet used by a real game.** All four calls are built and tested —
 objects and accounts can be archived, found, restored and deleted, with identity surviving and dbrefs
 deliberately not. References between objects are dropped rather than rebuilt, and nothing has been
-tested on PostgreSQL. See [docs/progress.md](docs/progress.md) for what exists and what proves it.
+tested on PostgreSQL. See [docs/progress.md](https://github.com/FullCircleMUD/evennia-archive/blob/main/docs/progress.md) for what exists and what proves it.
 
 ## The problem it solves
 
@@ -37,7 +37,9 @@ queryable record of accounts and characters, and it is not a substitute for back
 
 ## Install
 
-Not published to PyPI yet.
+```
+pip install evennia-archive
+```
 
 Editable install for development against a checkout:
 
@@ -52,18 +54,18 @@ python runtests.py
 ```
 
 Installing the package is not enough on its own — a consumer declares the app, a second database
-alias and a router in their own settings. **See [docs/archive-settings.md](docs/archive-settings.md)
+alias and a router in their own settings. **See [docs/archive-settings.md](https://github.com/FullCircleMUD/evennia-archive/blob/main/docs/archive-settings.md)
 for what to add**, including the one entry that will silently break a game that already has database
 routers.
 
 ## Learn more
 
-- [docs/INDEX.md](docs/INDEX.md) — the design wiki
-- [docs/design.md](docs/design.md) — the whole design, with a box above everything not yet settled
-- [docs/archive-settings.md](docs/archive-settings.md) — what a consumer declares in their settings
-- [docs/interoperability.md](docs/interoperability.md) — this library against its siblings
-- [CLAUDE.md](CLAUDE.md) — context for LLM agents working in this repo
+- [docs/INDEX.md](https://github.com/FullCircleMUD/evennia-archive/blob/main/docs/INDEX.md) — the design wiki
+- [docs/design.md](https://github.com/FullCircleMUD/evennia-archive/blob/main/docs/design.md) — the whole design, with a box above everything not yet settled
+- [docs/archive-settings.md](https://github.com/FullCircleMUD/evennia-archive/blob/main/docs/archive-settings.md) — what a consumer declares in their settings
+- [docs/interoperability.md](https://github.com/FullCircleMUD/evennia-archive/blob/main/docs/interoperability.md) — this library against its siblings
+- [CLAUDE.md](https://github.com/FullCircleMUD/evennia-archive/blob/main/CLAUDE.md) — context for LLM agents working in this repo
 
 ## Licence
 
-BSD 3-Clause. See [LICENSE](LICENSE).
+BSD 3-Clause. See [LICENSE](https://github.com/FullCircleMUD/evennia-archive/blob/main/LICENSE).

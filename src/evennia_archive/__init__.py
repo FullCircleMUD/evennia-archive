@@ -4,4 +4,4 @@
 Nothing is implemented yet — see docs/progress.md for current state.
 """
 
-__version__ = "0.0.1"
+__version__ = "0.1.0"

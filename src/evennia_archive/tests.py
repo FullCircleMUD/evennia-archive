@@ -37,7 +37,7 @@ class TestPackageInstalls(PlainTestCase):
     """Smoke test: the package imports and Django loads it as an app."""
 
     def test_version_is_exposed(self):
-        self.assertEqual(evennia_archive.__version__, "0.0.1")
+        self.assertEqual(evennia_archive.__version__, "0.1.0")
 
     def test_registered_in_installed_apps(self):
         self.assertIn("evennia_archive", settings.INSTALLED_APPS)
