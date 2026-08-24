@@ -146,3 +146,28 @@ class Guest(DefaultGuest):
     """
 
     pass
+
+
+# ---------------------------------------------------------------------
+# evennia-archive demo
+# ---------------------------------------------------------------------
+from evennia.typeclasses.attributes import AttributeProperty
+
+from evennia_archive.mixins import ArchivableMixin
+
+
+class ArchivableAccount(ArchivableMixin, DefaultAccount):
+    """An account the archive will accept.
+
+    Same deal as ArchivableCharacter: the mixin mints the identity at
+    creation, and wallet_address is demo furniture standing in for
+    however a consumer recognises a returning player.
+
+    Note that an account and its characters are archived separately, and
+    the link between them is not carried across — db_account is a
+    primary key into a database that gets rebuilt. Reattaching them after
+    a restore is the consumer's job, which for a wallet-based game means
+    finding both by the same wallet address.
+    """
+
+    wallet_address = AttributeProperty(None, strattr=True)

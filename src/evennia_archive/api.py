@@ -255,6 +255,71 @@ class NotArchived(LookupError):
     """Raised when nothing in the archive carries the given identity."""
 
 
+# Where a restored object records a value it could not keep. The game can
+# read it whenever it likes — at restore, or the next time the player logs
+# in — and offer them a rename. Deleting it is the consumer's business.
+RENAMED_FROM_KEY = "archive_renamed_from"
+
+# A restore that cannot find a free value after this many tries is stuck
+# rather than unlucky.
+_MAX_RENAME_ATTEMPTS = 1000
+
+
+def _conflicting_field(db_model, values):
+    """The first unique column whose value a live row already holds.
+
+    Asked of the model rather than learned by catching IntegrityError and
+    reading it: that message format differs between SQLite and Postgres
+    and across Django versions, so parsing it to find the column is
+    guesswork. The model knows exactly.
+
+    In practice this only ever finds ``username`` on an account. It is the
+    single unique field Evennia declares outside primary keys, objects
+    have none, and a consumer cannot add more — typeclass state lives in
+    Attributes rather than in the schema.
+    """
+    for field in db_model._meta.fields:
+        if not field.unique or field.primary_key:
+            continue
+        value = values.get(field.attname)
+        if value is None:
+            continue
+        if db_model.objects.filter(**{field.attname: value}).exists():
+            return field.attname, value
+    return None, None
+
+
+def _free_the_unique_values(db_model, values):
+    """Adjust unique values until none collide, returning what changed.
+
+    A name taken while its owner was away should not stop them getting
+    their character back, so the restore proceeds under an adjusted name
+    rather than failing. What is actually irreplaceable is the state —
+    levels, skills, progression — and none of that is touched by this.
+
+    Returns ``{field: original_value}`` for whatever had to change, empty
+    if nothing did.
+    """
+    renamed = {}
+    field, value = _conflicting_field(db_model, values)
+
+    while field is not None:
+        original = renamed.setdefault(field, value)
+        for attempt in range(1, _MAX_RENAME_ATTEMPTS + 1):
+            candidate = f"{original}{attempt}"
+            if not db_model.objects.filter(**{field: candidate}).exists():
+                values[field] = candidate
+                break
+        else:
+            raise RuntimeError(
+                f"no free {field} based on {original!r} after "
+                f"{_MAX_RENAME_ATTEMPTS} attempts"
+            )
+        field, value = _conflicting_field(db_model, values)
+
+    return renamed
+
+
 def _archived_values(db_model, archived_pk):
     """The archived row's column values, as a plain dict.
 
@@ -339,6 +404,16 @@ def restore(archive_id, return_object=True):
 
     Idempotent: restoring an identity that is already live returns the
     existing object rather than making a second copy.
+
+    **A unique value that is no longer free gets a number appended** —
+    in practice always an account whose username was taken while its
+    owner was away. `rowan` becomes `rowan1`, then `rowan2`, until one is
+    free. The restore proceeds rather than failing, because the name is
+    the recoverable part and the state behind it is not.
+
+    The value that could not be kept is recorded on the restored object
+    under ``archive_renamed_from``, so the game can offer a rename
+    whenever suits — at restore, or the next time they log in.
     """
     archive_id = str(archive_id)
     record = ArchiveRecord.objects.using(ARCHIVE_ALIAS).filter(pk=archive_id).first()
@@ -357,6 +432,8 @@ def restore(archive_id, return_object=True):
     if existing_pk is not None:
         return _return_as(db_model, existing_pk, return_object)
 
+    renamed = _free_the_unique_values(db_model, values)
+
     with transaction.atomic():
         # bulk_create for the same reason archive() uses it: a plain
         # create() fires Evennia's creation hooks, which would run the
@@ -366,6 +443,18 @@ def restore(archive_id, return_object=True):
         live_pk = db_model.objects.bulk_create([db_model(**values)])[0].pk
         _restore_attributes(db_model, record.archived_pk, live_pk)
         _restore_tags(db_model, record.archived_pk, live_pk)
+        if renamed:
+            note = Attribute.objects.create(
+                db_key=RENAMED_FROM_KEY,
+                db_value=renamed,
+                db_model=record.archived_model,
+                db_lock_storage="",
+            )
+            through = db_model.db_attributes.through
+            owner, target = _link_fields(through, db_model, Attribute)
+            through.objects.create(
+                **{f"{owner}_id": live_pk, f"{target}_id": note.pk}
+            )
 
     ArchiveRecord.objects.using(ARCHIVE_ALIAS).filter(pk=archive_id).update(
         last_restored=timezone.now()

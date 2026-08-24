@@ -462,6 +462,32 @@ simply nowhere. Nothing is at risk of being lost, because restore hands back the
 it back; deciding where it belongs and what it reattaches to is a game decision, and the consumer is
 better placed to make it than any library could be.
 
+### A name taken while its owner was away
+
+An account's username is unique, and a world rebuild frees every name in it. So a player who stops
+playing, has their world rebuilt, and comes back a year later may find someone else holding the name
+they left behind.
+
+**The restore proceeds under a numbered name rather than failing.** `rowan` becomes `rowan1`, then
+`rowan2`, until one is free. The reasoning is a judgement about what players actually mind losing: a
+name is recoverable — they can be offered another — while levels, skills and progression are not, and
+refusing the restore would cost them both.
+
+The value that could not be kept is recorded on the restored object under `archive_renamed_from`, as
+`{field: original}`. That is deliberately durable rather than a callback: the game can act on it at
+restore time, or leave it until the player next logs in and offer them a rename then. Clearing it
+afterwards is the consumer's business.
+
+**This only ever affects accounts.** `username` is the single unique field Evennia declares outside
+primary keys; `ObjectDB` has none at all, so two characters may share a name and a character restore
+can never be blocked. Nor can a consumer add more, because typeclass state lives in Attributes rather
+than in the schema.
+
+Collisions are detected by asking the model which of its fields are unique and querying each, not by
+catching `IntegrityError` and reading it. That message format differs between SQLite and Postgres and
+across Django versions, so parsing it to learn which column collided is guesswork where the model
+knows exactly.
+
 `restore()` therefore takes no placement arguments, and does not fall back to
 `settings.DEFAULT_HOME` — that resolves to Limbo, which is a game concept. `location` and `home` are
 `ObjectDB` concepts in any case: accounts have neither column, so an API carrying them would have to

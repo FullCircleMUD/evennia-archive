@@ -47,6 +47,11 @@ import os
 # 1. The app
 INSTALLED_APPS += ["evennia_archive"]
 
+# Everything created in this demo should be archivable, so the base
+# typeclasses are the ones carrying ArchivableMixin.
+BASE_CHARACTER_TYPECLASS = "typeclasses.characters.ArchivableCharacter"
+BASE_ACCOUNT_TYPECLASS = "typeclasses.accounts.ArchivableAccount"
+
 # 2. The archive database — a second Evennia schema, never run as a game
 DATABASES["archive"] = {
     "ENGINE": "django.db.backends.sqlite3",

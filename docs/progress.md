@@ -37,7 +37,24 @@ from the live database, and restores it with key, attributes, tags and identity 
 *different* primary key — identity survives, dbrefs do not, which is the whole design in one
 assertion.
 
-**Test suite: 45 tests, all passing.**
+A unique value taken while its owner was away does not block a restore. An account's username is
+unique and a world rebuild frees every name in it, so a returning player may find theirs held by
+someone else; the restore proceeds as `rowan1`, `rowan2` and so on, recording the original under
+`archive_renamed_from` so the game can offer a rename whenever suits. Characters are unaffected —
+`ObjectDB` declares no unique fields at all.
+
+**Test suite: 51 tests, all passing.**
+
+**Proven in a running game.** Beyond the unit tests, the full disaster scenario was executed by hand
+in `examples/demo_game`: an account and two characters created and archived, `evennia.db3` deleted
+and re-migrated from scratch, the game restarted, and a character recovered into the rebuilt world
+from **nothing but a wallet address** — level intact, under a new primary key, in a database that had
+never seen it. The archive sat untouched through the wipe.
+
+The same run showed what happens if a consumer creates an account before checking the archive: the
+new account takes the username and mints its own identity, leaving the archived one unrestorable.
+The documented flow — sign in, search the archive, restore on a hit — avoids it, and the auto-rename
+above now handles the case where the name really has gone.
 
 Every call is a plain synchronous function — the library imports no Twisted and assumes no reactor,
 because a management command, a migration and a test have none. Dispatching off the reactor is the

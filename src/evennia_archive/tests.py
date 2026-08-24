@@ -19,6 +19,7 @@ import evennia_archive
 from evennia_archive.api import (
     NotArchivable,
     NotArchived,
+    RENAMED_FROM_KEY,
     archive,
     delete,
     find,
@@ -439,3 +440,77 @@ class TestDelete(BaseEvenniaTest):
             .count(),
             1,
         )
+
+
+class TestRestoreUniqueCollision(BaseEvenniaTest):
+    """A unique value taken while its owner was away does not block a restore."""
+
+    databases = {"default", "archive"}
+
+    def _archived_account(self, key="rowan"):
+        account = create_account(
+            key, f"{key}@example.com", "sekritpw", typeclass=ArchivableTestAccount
+        )
+        account.attributes.add("level", 12)
+        archive_id = account.archive_id
+        archive(account)
+        account.delete()
+        return archive_id
+
+    def test_restores_under_a_numbered_name(self):
+        archive_id = self._archived_account()
+        # Someone else took the name while it was free.
+        create_account(
+            "rowan", "squatter@example.com", "sekritpw", typeclass=ArchivableTestAccount
+        )
+
+        restored = restore(archive_id)
+
+        self.assertEqual(restored.username, "rowan1")
+        self.assertEqual(restored.archive_id, archive_id)
+
+    def test_state_survives_the_rename(self):
+        # The point of renaming rather than refusing: the name is the
+        # recoverable part, the progression behind it is not.
+        archive_id = self._archived_account()
+        create_account(
+            "rowan", "squatter@example.com", "sekritpw", typeclass=ArchivableTestAccount
+        )
+        self.assertEqual(restore(archive_id).db.level, 12)
+
+    def test_original_name_is_recorded_on_the_restored_object(self):
+        archive_id = self._archived_account()
+        create_account(
+            "rowan", "squatter@example.com", "sekritpw", typeclass=ArchivableTestAccount
+        )
+        restored = restore(archive_id)
+        self.assertEqual(
+            restored.attributes.get(RENAMED_FROM_KEY), {"username": "rowan"}
+        )
+
+    def test_counts_up_past_several_taken_names(self):
+        archive_id = self._archived_account()
+        for taken in ("rowan", "rowan1", "rowan2"):
+            create_account(
+                taken, f"{taken}@example.com", "sekritpw",
+                typeclass=ArchivableTestAccount,
+            )
+        self.assertEqual(restore(archive_id).username, "rowan3")
+
+    def test_nothing_recorded_when_the_name_was_free(self):
+        restored = restore(self._archived_account())
+        self.assertEqual(restored.username, "rowan")
+        self.assertIsNone(restored.attributes.get(RENAMED_FROM_KEY))
+
+    def test_objects_never_collide(self):
+        # ObjectDB declares no unique fields, so two characters may share
+        # a name and a restore can never be blocked by one.
+        obj = create_object(ArchivableTestObject, key="Rowan")
+        archive_id = obj.archive_id
+        archive(obj)
+        obj.delete()
+        create_object(ArchivableTestObject, key="Rowan")
+
+        restored = restore(archive_id)
+        self.assertEqual(restored.db_key, "Rowan")
+        self.assertIsNone(restored.attributes.get(RENAMED_FROM_KEY))
