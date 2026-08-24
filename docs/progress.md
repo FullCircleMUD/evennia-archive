@@ -3,6 +3,15 @@
 Reverse-chronological milestone log. Newest first. Each entry states what became true and what proves
 it.
 
+## 2026-08-24 — Published to PyPI as `evennia-archive` 0.1.0
+
+First public release: https://pypi.org/project/evennia-archive/0.1.0/. Version bumped from the
+bootstrap `0.0.1`, in sync across `pyproject.toml`, `__init__.py`, and the smoke test. README's
+Install section now leads with `pip install evennia-archive`, every link converted to an absolute
+GitHub URL, and the "not published" status claim dropped. Built with `python -m build`, verified via
+`twine check` and a clean-room `pip install` into a fresh venv before upload, then re-verified against
+the live PyPI copy with a forced uncached install. Tagged `v0.1.0`.
+
 ## 2026-08-23 — Initial build
 
 The library archives Evennia objects and accounts into a second database and restores them into a
