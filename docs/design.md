@@ -478,8 +478,13 @@ The value that could not be kept is recorded on the restored object under `archi
 restore time, or leave it until the player next logs in and offer them a rename then. Clearing it
 afterwards is the consumer's business.
 
-**This only ever affects accounts.** `username` is the single unique field Evennia declares outside
-primary keys; `ObjectDB` has none at all, so two characters may share a name and a character restore
+**This only ever affects accounts, which is the part that makes it acceptable.** A player is attached
+to their character's name — that is who they appear as in the world — and a character name is never
+touched: `ObjectDB` declares no unique fields, so Rowan comes back as Rowan even with another Rowan
+standing next to him. The only name the library can ever change is the account one, which players see
+least and are least attached to.
+
+`username` is the single unique field Evennia declares outside primary keys, so a character restore
 can never be blocked. Nor can a consumer add more, because typeclass state lives in Attributes rather
 than in the schema.
 

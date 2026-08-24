@@ -47,7 +47,7 @@ someone else; the restore proceeds as `rowan1`, `rowan2` and so on, recording th
 
 **Proven in a running game.** Beyond the unit tests, the full disaster scenario was executed by hand
 in `examples/demo_game`: an account and two characters created and archived, `evennia.db3` deleted
-and re-migrated from scratch, the game restarted, and a character recovered into the rebuilt world
+and rebuilt with `evennia migrate`, the game restarted, and a character recovered into the rebuilt world
 from **nothing but a wallet address** — level intact, under a new primary key, in a database that had
 never seen it. The archive sat untouched through the wipe.
 
