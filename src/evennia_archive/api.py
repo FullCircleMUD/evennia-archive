@@ -26,7 +26,7 @@ from django.db.models import Q
 from django.utils import timezone
 from evennia.typeclasses.models import Attribute, Tag
 
-from .mixins import ARCHIVE_ID_KEY
+from .mixins import ARCHIVE_ID_KEY, ArchivableMixin
 from .models import ArchiveRecord
 
 ARCHIVE_ALIAS = "archive"
@@ -67,11 +67,29 @@ class NotArchivable(ValueError):
 
 
 def _identity_of(obj):
-    archive_id = getattr(obj, "archive_id", None)
+    """Return ``obj``'s archive identity, refusing anything else.
+
+    The contract is the mixin, not the attribute. ``ArchiveRecord`` keys on a
+    ``UUIDField``, and ``restore()`` matches a live row by that value, so an
+    identity that is not a uuid4 minted once and never reissued is not usable
+    — a value from anywhere else either fails at write time with a Django
+    validation error, or collides and restores the wrong object silently.
+    The mixin is what guarantees the property; an attribute guarantees
+    nothing, and there is no way to check after the fact.
+    """
+    if not isinstance(obj, ArchivableMixin):
+        raise NotArchivable(
+            f"{obj!r} does not carry ArchivableMixin. Identity has to come "
+            "from the mixin, which mints a uuid4 once and never reissues it "
+            "— that is what makes archive_id safe to match rows on. Add the "
+            "mixin to its typeclass."
+        )
+    archive_id = obj.archive_id
     if not archive_id:
         raise NotArchivable(
-            f"{obj!r} has no archive_id. Add ArchivableMixin to its typeclass, "
-            "and call at_archive_init() on objects created before you did."
+            f"{obj!r} carries ArchivableMixin but has no archive_id yet. "
+            "Call at_archive_init() on it — objects created before the mixin "
+            "was added need it once, and it never overwrites."
         )
     return archive_id
 

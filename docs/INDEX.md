@@ -17,6 +17,7 @@ recorded.
 | Document | What it covers |
 |---|---|
 | [progress.md](progress.md) | Reverse-chronological milestone log — what exists, with evidence |
+| [test-plan.md](test-plan.md) | Every case the library commits to covering, and the test function that covers it |
 
 ## Integration
 

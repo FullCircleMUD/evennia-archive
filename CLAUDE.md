@@ -48,9 +48,13 @@ Agreed in the design conversation of 2026-08-23. Every implementation decision m
 4. **Test the object, never the library.** Optional capabilities are detected by asking the object
    whether it exposes what is needed — never by checking whether a sibling library is installed.
    Detecting a library is a hidden dependency wearing an optional one's clothes.
-5. **Identity is a contract, not an implementation.** The library needs a stable identifier to match
-   rows across two databases, so it states what it looks for and ships a default way to provide it.
-   How a consumer mints one is theirs to decide.
+5. **Identity comes from the mixin, and only from the mixin.** The library matches rows across two
+   databases by `archive_id`, and `ArchiveRecord` keys on a `UUIDField`, so the value has to be a
+   uuid4 minted once and never reissued. `ArchivableMixin` is what guarantees that; an object merely
+   exposing an `archive_id` attribute guarantees nothing, and the library cannot check after the fact
+   — a value from anywhere else either fails at write time as an invalid UUID, or collides and makes
+   `restore()` return the wrong object with nothing in any log. So `archive()` tests for the mixin
+   itself rather than for the attribute. See `AR-09` in the test plan.
 6. **Vanilla first.** The library must be fully useful with no optional integration present. Every
    enhancement degrades to the plain behaviour rather than becoming a requirement.
 
@@ -59,7 +63,8 @@ Agreed in the design conversation of 2026-08-23. Every implementation decision m
 Decided as questions arise — the project is too young for a settled list. Rulings so far:
 
 - **Database backups.** This is not `pg_dump` and is not a substitute for backing up a database.
-- **Minting policy.** The library does not decide how a consumer generates stable identifiers.
+- **Consumer-minted identifiers.** Identity is the mixin's to mint, not the consumer's to supply. See
+  principle 5.
 
 ## Working conventions
 
