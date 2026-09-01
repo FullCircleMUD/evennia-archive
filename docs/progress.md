@@ -3,6 +3,30 @@
 Reverse-chronological milestone log. Newest first. Each entry states what became true and what proves
 it.
 
+## 2026-09-01 — The mixin is the contract, and the library has a log of its own
+
+**`ArchivableMixin` is now required, not merely offered.** `_identity_of` used to accept anything
+exposing an `archive_id`, which read as flexibility and was not. `ArchiveRecord` keys on a
+`UUIDField` and `restore()` matches a live row by that value, so an identity minted anywhere else
+either fails at write time as an invalid UUID — which is what a hand-rolled value actually does, deep
+inside Django, after the copy has begun — or collides and restores the wrong object with nothing in
+any log. The mixin is what guarantees a uuid4 minted once and never reissued, and the library has no
+way to check the guarantee after the fact.
+
+`archive()` now tests for the mixin itself, and separates the two mistakes it was conflating: no mixin
+at all, and the mixin present but `at_archive_init()` never called on an object that predates it.
+`AR-09` and `AR-10` cover them. Principle 5 in `CLAUDE.md` was rewritten rather than quietly
+falsified — it had said identity was a contract whose implementation belonged to the consumer, which
+is the opposite of this.
+
+**A logging shim, `archive_log` into `archive.log`.** Copied verbatim from its siblings, bringing the
+library into line with the standard that every library logs to a file of its own rather than into the
+main server log. Covered by `LG-01` to `LG-06`. **Nothing calls it yet** — what an archive or a
+restore should emit has not been agreed, and is marked `[TBD]` in the test plan.
+
+Also: the test plan itself came under version control, having described the suite for a week without
+being committed.
+
 ## 2026-08-24 — Published to PyPI as `evennia-archive` 0.1.0
 
 First public release: https://pypi.org/project/evennia-archive/0.1.0/. Version bumped from the

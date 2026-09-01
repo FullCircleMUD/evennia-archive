@@ -13,6 +13,7 @@ All test functions live in `src/evennia_archive/tests.py`.
 | Prefix | Covers |
 |---|---|
 | `SM` | Smoke — the package installs and Django loads it |
+| `LG` | Logging |
 | `ID` | `ArchivableMixin` — minting and storing the identity |
 | `AR` | `archive()` |
 | `RS` | `restore()` |
@@ -35,6 +36,26 @@ All test functions live in `src/evennia_archive/tests.py`.
 |---|---|---|
 | `SM-01` | The package exposes `__version__` | `test_version_is_exposed` |
 | `SM-02` | Django loads `evennia_archive` as an installed app | `test_registered_in_installed_apps` |
+
+## Logging
+
+The library logs to a file of its own rather than into the main server log, through a shim copied
+verbatim from its siblings. An archive or a restore is exactly the kind of operation someone reads the
+log for afterwards, and picking its lines out of everything else the game emitted is the thing this
+avoids.
+
+| ID | Case | Test function |
+|---|---|---|
+| `LG-01` | A line goes to `archive.log`, prefixed with its level | `test_writes_to_the_library_log_file` |
+| `LG-02` | A level outside `INFO`/`WARN`/`ERROR` coerces to `INFO` and never raises | `test_unknown_level_coerces_to_info` |
+| `LG-03` | With Evennia unimportable the call is a silent no-op | `test_is_a_silent_noop_without_evennia` |
+| `LG-04` | `trace=True` outside an `except` block adds nothing — no `NoneType: None` noise | `test_trace_outside_an_except_block_adds_nothing` |
+| `LG-05` | `trace=True` inside an `except` block appends the traceback | `test_trace_inside_an_except_block_appends_the_traceback` |
+| `LG-06` | The shim writes to the library's own filename, not the server log | `test_log_filename_is_the_libraries_own` |
+
+**Nothing calls the shim yet.** The cases above cover the shim itself; no operation in the library
+emits a line. `[TBD — needs discussion: what archive should log. The candidates are the four public
+calls and the two refusal paths in `_identity_of`, but nothing has been agreed.]`
 
 ## Identity — `ArchivableMixin`
 

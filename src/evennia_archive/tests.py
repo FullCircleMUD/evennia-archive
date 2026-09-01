@@ -5,6 +5,7 @@ Run via ``python runtests.py`` from the library root.
 """
 import uuid
 from unittest import TestCase as PlainTestCase
+from unittest import mock
 
 from django.conf import settings
 from evennia.accounts.accounts import DefaultAccount
@@ -25,6 +26,8 @@ from evennia_archive.api import (
     find,
     restore,
 )
+from evennia_archive import log as log_module
+from evennia_archive.log import archive_log
 from evennia_archive.mixins import ARCHIVE_ID_KEY, ArchivableMixin
 from evennia_archive.models import ArchiveRecord
 
@@ -56,6 +59,72 @@ class TestPackageInstalls(PlainTestCase):
     def test_registered_in_installed_apps(self):
         """SM-02"""
         self.assertIn("evennia_archive", settings.INSTALLED_APPS)
+
+
+class TestLogShim(PlainTestCase):
+    """LG — the logging shim."""
+
+    def _capture(self):
+        """Return a fake Evennia logger recording every log_file call."""
+        fake = mock.Mock()
+        fake.log_file = mock.Mock()
+        return fake
+
+    def test_writes_to_the_library_log_file(self):
+        """LG-01"""
+        fake = self._capture()
+        with mock.patch.dict("sys.modules", {"evennia.utils": mock.Mock(logger=fake)}):
+            archive_log("restored Rowan", level="INFO")
+        fake.log_file.assert_called_once_with(
+            "[INFO] restored Rowan", filename="archive.log"
+        )
+
+    def test_unknown_level_coerces_to_info(self):
+        """LG-02"""
+        fake = self._capture()
+        with mock.patch.dict("sys.modules", {"evennia.utils": mock.Mock(logger=fake)}):
+            archive_log("something", level="CRITICAL")
+        fake.log_file.assert_called_once_with(
+            "[INFO] something", filename="archive.log"
+        )
+
+    def test_is_a_silent_noop_without_evennia(self):
+        """LG-03"""
+        real_import = __import__
+
+        def refuse_evennia(name, *args, **kwargs):
+            if name == "evennia.utils":
+                raise ImportError("no evennia here")
+            return real_import(name, *args, **kwargs)
+
+        with mock.patch("builtins.__import__", side_effect=refuse_evennia):
+            self.assertIsNone(archive_log("nobody hears this"))
+
+    def test_trace_outside_an_except_block_adds_nothing(self):
+        """LG-04"""
+        fake = self._capture()
+        with mock.patch.dict("sys.modules", {"evennia.utils": mock.Mock(logger=fake)}):
+            archive_log("no exception here", trace=True)
+        fake.log_file.assert_called_once_with(
+            "[INFO] no exception here", filename="archive.log"
+        )
+
+    def test_trace_inside_an_except_block_appends_the_traceback(self):
+        """LG-05"""
+        fake = self._capture()
+        with mock.patch.dict("sys.modules", {"evennia.utils": mock.Mock(logger=fake)}):
+            try:
+                raise ValueError("archive alias unreachable")
+            except ValueError:
+                archive_log("archive failed", level="ERROR", trace=True)
+        (line,), kwargs = fake.log_file.call_args
+        self.assertTrue(line.startswith("[ERROR] archive failed\n"))
+        self.assertIn("ValueError: archive alias unreachable", line)
+        self.assertEqual(kwargs["filename"], "archive.log")
+
+    def test_log_filename_is_the_libraries_own(self):
+        """LG-06"""
+        self.assertEqual(log_module._LOG_FILENAME, "archive.log")
 
 
 class TestArchivableMixin(BaseEvenniaTest):
