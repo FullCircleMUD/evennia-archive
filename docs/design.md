@@ -206,6 +206,9 @@ Requiring a mixin rather than inferring archivability means the library never gu
 without it is not archivable, and that is a consumer decision expressed in their own typeclass
 definitions.
 
+There are three to pick from, because Evennia calls a different creation hook for each kind and
+because an account has a second job the others do not.
+
 ### As built
 
 `ArchivableObjectMixin`, `ArchivableCharacterMixin` and `ArchivableAccountMixin` in
@@ -221,6 +224,25 @@ Evennia calls, and in what each needs beyond identity.
 | Minted | In `at_object_creation` / `at_account_creation`, or `at_archive_init()` explicitly |
 | Type returned | `str`, not `uuid.UUID` |
 
+| Mixin | For | Adds beyond identity |
+|---|---|---|
+| `ArchivableObjectMixin` | anything descending from `ObjectDB` | — |
+| `ArchivableCharacterMixin` | player characters an account owns | `owner_account_archive_id` |
+| `ArchivableAccountMixin` | accounts | stamps its characters, and writes their ownership locks |
+| `ArchivableBaseMixin` | the identity itself | not for direct use — its creation hooks refuse |
+
+**The base refuses rather than doing nothing.** A typeclass carrying it directly would exist with no
+identity and only reveal that at the first archive, so its creation hooks raise instead, naming the
+mixin that should have been used. A true abstract base is not available: Evennia's typeclasses carry
+the `TypeclassBase` metaclass, and adding `ABCMeta` to it is a metaclass conflict at class
+definition, while `@abstractmethod` without `ABCMeta` enforces nothing.
+
+The cost is that the library's own children cannot call plain `super()` from a creation hook — the
+mixin chain precedes Evennia's class in the MRO, so it would land on the refusal. They use
+`super(ArchivableBaseMixin, self)`, which resumes after the base. **A consumer overriding a creation
+hook is unaffected** and calls `super()` as normal, because that lands on the kind-specific mixin
+rather than on the base.
+
 **Why unpickled matters more than it looks.** A pickled attribute is compared by pickling the search
 term and matching bytes, which only holds while the same value always serialises identically — across
 a protocol change it can quietly stop matching, and a lookup that silently returns nothing is the
@@ -231,9 +253,47 @@ hand during exactly the incidents this library exists for.
 `uuid.UUID` comparison is not, so `"F47AC10B…"` and `"f47ac10b…"` would fail to match despite being
 the same identifier. Every value goes through one minting path, so every stored value has one form.
 
-**The mixin ships both creation conventions.** It overrides the creation hooks itself, *and* exposes
-`at_archive_init()` for a typeclass that already overrides them. A library cannot assume the
+**The mixins ship both creation conventions.** They override the creation hooks themselves, *and*
+expose `at_archive_init()` for a typeclass that already overrides them. A library cannot assume the
 consumer's MRO, so it cannot pick one.
+
+### Character ownership
+
+A character belongs to an account, and that link has to survive a restore. `db_account` cannot carry
+it — a primary key means nothing in the other database, so the archive drops it like every other
+dbref. `ArchivableAccountMixin.at_post_create_character` stamps the character with the account's
+`archive_id` instead, in the one place both objects are in hand.
+
+The same hook rewrites the character's ownership locks. Evennia writes those at creation with
+primary keys as literals:
+
+```
+puppet:id(3) or pid(2) or perm(Developer) or pperm(Developer)
+```
+
+Both keys change on every restore, so the locks come back naming objects that no longer exist and the
+owning account is refused its own character, with nothing in any log. They are replaced with a lock
+function the library ships:
+
+```
+puppet:owns_character() or perm(Developer) or pperm(Developer)
+edit:owns_character() or perm(Admin)
+delete:owns_character() or perm(Admin)
+```
+
+`owns_character()` compares the accessor's `archive_id` to the character's owner stamp. It takes no
+argument, so the lock and the stamp cannot come to name different accounts. A consumer registers it
+in `LOCK_FUNC_MODULES` — see [archive-settings.md](archive-settings.md) — and a missing registration
+refuses everyone rather than admitting them.
+
+The permission clauses are Evennia's own, kept so an administrator and a superuser get in exactly as
+before. Access types the rewrite does not name are untouched: `locks.add` is an upsert per access
+type.
+
+**Wearing the character mixin means having an owner.** `archive()` refuses a character-mixin object
+with no stamp, naming `ArchivableObjectMixin` — the declaration is for player characters, and an NPC
+typed as a Character belongs on the object mixin. The check cannot happen at creation, because at
+`at_object_creation` there is no account reference to test against.
 
 Both decisions are pinned by tests — the minted value must round-trip through `uuid.UUID` unchanged,
 and it must land in `db_strvalue` with `db_value` null.

@@ -8,7 +8,9 @@ from unittest import TestCase as PlainTestCase
 from unittest import mock
 
 from django.conf import settings
+from django.test import override_settings
 from evennia.accounts.accounts import DefaultAccount
+from evennia.locks import lockhandler
 from evennia.accounts.models import AccountDB
 from evennia.objects.models import ObjectDB
 from evennia.typeclasses.models import Attribute
@@ -29,9 +31,11 @@ from evennia_archive.api import (
     restore,
 )
 from evennia_archive import log as log_module
+from evennia_archive.lockfuncs import owns_character
 from evennia_archive.log import archive_log
 from evennia_archive.mixins import (
     ARCHIVE_ID_KEY,
+    OWNER_ACCOUNT_KEY,
     ArchivableAccountMixin,
     ArchivableBaseMixin,
     ArchivableCharacterMixin,
@@ -46,6 +50,33 @@ class ArchivableTestObject(ArchivableObjectMixin, DefaultObject):
 
 class ArchivableTestCharacter(ArchivableCharacterMixin, DefaultCharacter):
     """A minimal character typeclass, for the stamp and the locks."""
+
+
+class PlainTestCharacter(DefaultCharacter):
+    """A character with no archivable mixin — `AM-06`.
+
+    Not every Character in a game belongs to a player. An account creating
+    one of these must not raise, and must not stamp it.
+    """
+
+
+class ObjectMixinTestCharacter(ArchivableObjectMixin, DefaultCharacter):
+    """Archivable, but not declared as account-owned — `AM-06`.
+
+    The discriminating fixture. A character carrying no mixin at all is
+    excluded by any check, so it cannot tell whether the stamp is gated on
+    the character mixin or merely on archivability. This one can.
+    """
+
+
+# Evennia's BaseEvenniaTest replaces LOCK_FUNC_MODULES outright, so its own
+# two entries are repeated here — the override does not extend, and dropping
+# them would take every built-in lockfunc with it.
+_LOCK_FUNC_MODULES = (
+    "evennia.locks.lockfuncs",
+    "evennia.game_template.server.conf.lockfuncs",
+    "evennia_archive.lockfuncs",
+)
 
 
 class LookalikeTestObject(DefaultObject):
@@ -248,18 +279,183 @@ class TestArchivableBaseMixin(BaseEvenniaTest):
             )
         self.assertIn("ArchivableAccountMixin", str(caught.exception))
 
+    def test_base_refuses_to_stamp_a_character(self):
+        """ID-09"""
+        # Called on the base explicitly: an account that would reach it
+        # through the MRO cannot be created at all, since ID-08 refuses it.
+        account = create_account(
+            "wrongmixin",
+            "wrongmixin@example.com",
+            "sekritpw",
+            typeclass=ArchivableTestAccount,
+        )
+        character = create_object(ArchivableTestCharacter, key="Rowan")
+        with self.assertRaises(NotImplementedError) as caught:
+            ArchivableBaseMixin.at_post_create_character(account, character)
+        self.assertIn("ArchivableAccountMixin", str(caught.exception))
 
+
+@override_settings(LOCK_FUNC_MODULES=_LOCK_FUNC_MODULES)
 class TestArchivableAccountMixin(BaseEvenniaTest):
-    """The kind-specific mixin for accounts."""
+    """The kind-specific mixin for accounts.
+
+    Registers the library's lockfuncs for the same reason `LF` does: the
+    hook writes `owns_character()` into a lockstring, and a clause naming
+    an unregistered function cannot be parsed.
+    """
 
     databases = {"default", "archive"}
 
+    def setUp(self):
+        super().setUp()
+        # _LOCKFUNCS is a process-wide cache, built once on the first
+        # LockHandler ever constructed. By the time this class runs it
+        # already holds Evennia's set, so the override above changes
+        # nothing until the cache is rebuilt under it.
+        lockhandler._cache_lockfuncs()
+
+    @classmethod
+    def tearDownClass(cls):
+        # After super() the override is lifted, so this puts the cache back
+        # to what the rest of the suite expects.
+        super().tearDownClass()
+        lockhandler._cache_lockfuncs()
+
+    def _account(self, key="rowan"):
+        return create_account(
+            key, f"{key}@example.com", "sekritpw", typeclass=ArchivableTestAccount
+        )
+
+    def _created_character(self, account=None, typeclass=ArchivableTestCharacter):
+        """A character put through the account's hook, as Evennia would.
+
+        `create_character` is not used: it needs a full gamedir's chargen
+        settings. The two steps it takes that matter here are creating the
+        object and calling the hook, so this does both.
+        """
+        account = account or self._account()
+        character = create_object(typeclass, key="Rowan")
+        account.at_post_create_character(character)
+        return account, character
+
     def test_an_account_mixin_account_is_archivable(self):
         """AM-02"""
-        account = create_account(
-            "rowan", "rowan@example.com", "sekritpw", typeclass=ArchivableTestAccount
-        )
+        account = self._account()
         self.assertEqual(archive(account).archive_id, account.archive_id)
+
+    def test_stamps_the_character_with_its_owner(self):
+        """AM-03"""
+        account, character = self._created_character()
+        self.assertEqual(character.owner_account_archive_id, account.archive_id)
+
+    def test_the_stamp_is_stored_unpickled(self):
+        """AM-04"""
+        # find() matches db_strvalue. Pickled, the same value would be a
+        # byte comparison whose stability depends on the pickle protocol.
+        _, character = self._created_character()
+        attr = character.attributes.get(
+            OWNER_ACCOUNT_KEY, return_obj=True, strattr=True
+        )
+        self.assertTrue(attr.db_strvalue)
+        self.assertIsNone(attr.db_value)
+
+    def test_the_stamp_is_never_overwritten(self):
+        """AM-05"""
+        first = self._account("rowan")
+        character = create_object(ArchivableTestCharacter, key="Rowan")
+        character.attributes.add(OWNER_ACCOUNT_KEY, first.archive_id, strattr=True)
+
+        self._account("sable").at_post_create_character(character)
+
+        self.assertEqual(character.owner_account_archive_id, first.archive_id)
+
+    def test_a_character_without_the_mixin_is_left_alone(self):
+        """AM-06"""
+        # Not every Character in a game is a player's. One that cannot read
+        # the stamp back has no business carrying it.
+        for index, typeclass in enumerate(
+            (PlainTestCharacter, ObjectMixinTestCharacter)
+        ):
+            with self.subTest(typeclass=typeclass.__name__):
+                _, character = self._created_character(
+                    account=self._account(f"owner{index}"), typeclass=typeclass
+                )
+                self.assertIsNone(
+                    character.attributes.get(OWNER_ACCOUNT_KEY, strattr=True)
+                )
+
+    def test_evennias_own_hook_still_runs(self):
+        """AM-07"""
+        account, character = self._created_character()
+        self.assertIn(character, account.characters.all())
+        self.assertEqual(account.db._last_puppet, character)
+
+    def test_the_puppet_lock_uses_the_lockfunc(self):
+        """AM-08"""
+        _, character = self._created_character()
+        self.assertEqual(
+            character.locks.get("puppet"),
+            "puppet:owns_character() or perm(Developer) or pperm(Developer)",
+        )
+
+    def test_the_edit_and_delete_locks_use_the_lockfunc(self):
+        """AM-09"""
+        _, character = self._created_character()
+        self.assertEqual(
+            character.locks.get("edit"), "edit:owns_character() or perm(Admin)"
+        )
+        self.assertEqual(
+            character.locks.get("delete"), "delete:owns_character() or perm(Admin)"
+        )
+
+    def test_no_primary_key_clause_survives(self):
+        """AM-10"""
+        # AM-08 passes as soon as one working clause exists, and would not
+        # notice a dead pid() sitting beside it in db_lock_storage.
+        _, character = self._created_character()
+        for access_type in ("puppet", "edit", "delete"):
+            clause = character.locks.get(access_type)
+            self.assertNotIn("id(", clause.replace("owns_character(", ""))
+        self.assertNotIn("pid(", character.db_lock_storage)
+
+    def test_the_permission_clauses_survive(self):
+        """AM-11"""
+        # The other half of AM-10: a rewrite thorough enough to drop the
+        # stale clauses could just as easily drop an operator's way in.
+        _, character = self._created_character()
+        self.assertIn("perm(Developer)", character.locks.get("puppet"))
+        self.assertIn("pperm(Developer)", character.locks.get("puppet"))
+        self.assertIn("perm(Admin)", character.locks.get("edit"))
+        self.assertIn("perm(Admin)", character.locks.get("delete"))
+
+    def test_unnamed_access_types_survive(self):
+        """AM-12"""
+        # locks.add is an upsert per access type: the ones it names are
+        # replaced outright, the ones it does not are untouched. AM-08 and
+        # AM-09 prove the replacement; this proves the rewrite is three
+        # clauses rather than a whole lockstring.
+        untouched = (
+            "control",
+            "examine",
+            "view",
+            "get",
+            "drop",
+            "call",
+            "tell",
+            "teleport",
+            "teleport_here",
+            "boot",
+            "msg",
+        )
+        account = self._account()
+        character = create_object(ArchivableTestCharacter, key="Rowan")
+        before = {t: character.locks.get(t) for t in untouched}
+        # Otherwise the comparison below could pass on two empty dicts.
+        self.assertTrue(any(before.values()))
+
+        account.at_post_create_character(character)
+
+        self.assertEqual({t: character.locks.get(t) for t in untouched}, before)
 
 
 class TestArchivableCharacterMixin(BaseEvenniaTest):
@@ -274,10 +470,117 @@ class TestArchivableCharacterMixin(BaseEvenniaTest):
         character = create_object(ArchivableTestCharacter, key="Rowan")
         self.assertTrue(character.archive_id)
 
+    def _owned(self, key="Rowan", owner="1a04b6d2-0f4e-4f6a-9c9b-2f2a8d3e4c5f"):
+        """A character stamped with an owner, without an account creating it.
+
+        The stamp is what the account's hook writes; setting it directly
+        keeps these cases about the character mixin rather than about the
+        account's creation path.
+        """
+        character = create_object(ArchivableTestCharacter, key=key)
+        character.attributes.add(OWNER_ACCOUNT_KEY, owner, strattr=True)
+        return character
+
+    def test_owner_accessor_returns_the_stamp(self):
+        """CM-02"""
+        character = self._owned()
+        self.assertEqual(
+            character.owner_account_archive_id,
+            "1a04b6d2-0f4e-4f6a-9c9b-2f2a8d3e4c5f",
+        )
+
+    def test_a_character_with_no_owner_reads_as_none(self):
+        """CM-03"""
+        # Reading is not archiving. An NPC typed as a Character has no
+        # owner, and asking for one is not an error — AR-11 is where the
+        # misdeclaration is refused.
+        character = create_object(ArchivableTestCharacter, key="Guard")
+        self.assertIsNone(character.owner_account_archive_id)
+
     def test_a_character_mixin_character_is_archivable(self):
         """CM-04"""
-        character = create_object(ArchivableTestCharacter, key="Rowan")
+        character = self._owned()
         self.assertEqual(archive(character).archive_id, character.archive_id)
+
+
+@override_settings(LOCK_FUNC_MODULES=_LOCK_FUNC_MODULES)
+class TestOwnsCharacterLockFunc(BaseEvenniaTest):
+    """LF — the lock function the library ships.
+
+    One question: is the accessor the account that owns this character.
+
+    The registration is overridden here rather than set in
+    tests/test_settings.py, because Evennia's own BaseEvenniaTest applies
+    an override_settings that replaces LOCK_FUNC_MODULES outright — so
+    anything a project registers is invisible inside it.
+    """
+
+    def setUp(self):
+        super().setUp()
+        lockhandler._cache_lockfuncs()
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        lockhandler._cache_lockfuncs()
+
+    def _account(self, key="rowan"):
+        return create_account(
+            key, f"{key}@example.com", "sekritpw", typeclass=ArchivableTestAccount
+        )
+
+    def _character_of(self, account, key="Rowan"):
+        character = create_object(ArchivableTestCharacter, key=key)
+        character.attributes.add(OWNER_ACCOUNT_KEY, account.archive_id, strattr=True)
+        return character
+
+    def test_the_owning_account_is_granted(self):
+        """LF-01"""
+        account = self._account()
+        self.assertTrue(owns_character(account, self._character_of(account)))
+
+    def test_another_account_is_refused(self):
+        """LF-02"""
+        character = self._character_of(self._account("rowan"))
+        self.assertFalse(owns_character(self._account("sable"), character))
+
+    def test_a_character_with_no_owner_refuses_everyone(self):
+        """LF-03"""
+        # The dangerous shape is both sides absent. Comparing None to None
+        # would be true and would hand every unowned character to every
+        # account, silently and completely.
+        orphan = create_object(ArchivableTestCharacter, key="Guard")
+        self.assertIsNone(orphan.owner_account_archive_id)
+        self.assertFalse(owns_character(self._account(), orphan))
+        self.assertFalse(
+            owns_character(create_object(DefaultObject, key="rock"), orphan)
+        )
+
+    def test_a_puppeted_character_resolves_to_its_account(self):
+        """LF-04"""
+        # edit and delete are checked with the character as accessor, so
+        # without this the owner would be refused its own character.
+        account = self._account()
+        character = self._character_of(account)
+        character.db_account = account
+        self.assertTrue(owns_character(character, character))
+
+    def test_an_unpuppeted_character_is_refused(self):
+        """LF-05"""
+        character = self._character_of(self._account())
+        self.assertIsNone(character.db_account)
+        self.assertFalse(owns_character(character, character))
+
+    def test_resolves_out_of_a_real_lockstring(self):
+        """LF-06"""
+        # The only case that exercises it as a lock function: parsed from a
+        # string, resolved through LOCK_FUNC_MODULES, and called with the
+        # arguments Evennia chooses.
+        account = self._account()
+        character = self._character_of(account)
+        character.locks.add("puppet:owns_character()")
+        self.assertTrue(character.access(account, "puppet"))
+        self.assertFalse(character.access(self._account("sable"), "puppet"))
 
 
 class TestArchivableObjectMixin(BaseEvenniaTest):
@@ -422,6 +725,17 @@ class TestArchive(BaseEvenniaTest):
         # object would also not contain "doomed", and would say nothing.
         self.assertIn(ARCHIVE_ID_KEY, copied)
         self.assertNotIn("doomed", copied)
+
+    def test_refuses_a_character_with_no_owner(self):
+        """AR-11"""
+        # ArchivableCharacterMixin declares that an account owns the object,
+        # and an account stamps every character it creates. No stamp means
+        # no account created it — an NPC wearing a mixin meant for players.
+        npc = create_object(ArchivableTestCharacter, key="Guard")
+        self.assertIsNone(npc.owner_account_archive_id)
+        with self.assertRaises(NotArchivable) as caught:
+            archive(npc)
+        self.assertIn("ArchivableObjectMixin", str(caught.exception))
 
     def test_location_reference_is_dropped(self):
         """AR-08"""

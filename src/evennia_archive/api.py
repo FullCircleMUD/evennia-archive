@@ -26,7 +26,11 @@ from django.db.models import Q
 from django.utils import timezone
 from evennia.typeclasses.models import Attribute, Tag
 
-from .mixins import ARCHIVE_ID_KEY, ArchivableBaseMixin
+from .mixins import (
+    ARCHIVE_ID_KEY,
+    ArchivableBaseMixin,
+    ArchivableCharacterMixin,
+)
 from .models import ArchiveRecord
 
 ARCHIVE_ALIAS = "archive"
@@ -240,6 +244,21 @@ def archive(obj):
     changing how anything here reads or writes.
     """
     archive_id = _identity_of(obj)
+
+    # ArchivableCharacterMixin declares that an account owns this object,
+    # and an account stamps every character it creates. So no stamp means
+    # no account created it — an NPC or a mob wearing a mixin meant for
+    # player characters. Creation cannot catch this: at at_object_creation
+    # there is no account reference to test. This is the first point that
+    # can, and the first that has cause to.
+    if isinstance(obj, ArchivableCharacterMixin) and not obj.owner_account_archive_id:
+        raise NotArchivable(
+            f"{obj!r} carries ArchivableCharacterMixin but names no owner "
+            "account. That mixin is for player characters, which an account "
+            "creates and stamps. Use ArchivableObjectMixin for an NPC, a mob, "
+            "or anything else no account owns."
+        )
+
     db_model = obj.__dbclass__
     model_name = db_model.__name__.lower()
 

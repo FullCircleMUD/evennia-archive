@@ -31,6 +31,25 @@ if _ARCHIVE_ROUTER not in DATABASE_ROUTERS:
 The router is a dotted-path string, exactly like an app entry — the class ships with the library and
 a consumer never writes one.
 
+## The lock function
+
+Add the library's lock functions alongside your own:
+
+```python
+LOCK_FUNC_MODULES = list(LOCK_FUNC_MODULES) + ["evennia_archive.lockfuncs"]
+```
+
+`list(...)` rather than `+=`: Evennia declares `LOCK_FUNC_MODULES` as a tuple, and `+=` with a list
+raises `TypeError: can only concatenate tuple (not "list") to tuple` before the server starts.
+
+`ArchivableAccountMixin` writes `owns_character()` into a character's `puppet`, `edit` and `delete`
+locks, replacing the primary keys Evennia bakes in at creation — those name objects that no longer
+exist after a restore, and the owning account is refused its own character with nothing in any log.
+
+Without this line the clause cannot resolve and evaluates false, so every ownership check refuses.
+That is the direction a missing registration should fail in, but it looks identical to a permissions
+problem, so it is worth checking first if an account cannot puppet a character it owns.
+
 ## Marking typeclasses as archivable
 
 Settings alone archive nothing. **The library only archives objects whose typeclass carries one of
@@ -54,20 +73,36 @@ class Ship(ArchivableObjectMixin, DefaultObject):
     pass
 ```
 
-That is the whole of it. The mixin mints an `archive_id` when the object is created and never changes
-it afterwards — there is no identifier to supply, generate, or keep unique.
+The mixin mints an `archive_id` when the object is created and never changes it afterwards — there is
+no identifier to supply, generate, or keep unique.
 
-If your typeclass already overrides the creation hook, call the initialiser from it instead:
+| Mixin | Use it for |
+|---|---|
+| `ArchivableObjectMixin` | anything descending from `ObjectDB` — items, rooms, ships |
+| `ArchivableCharacterMixin` | player characters, which an account creates and owns |
+| `ArchivableAccountMixin` | accounts |
+
+**`ArchivableCharacterMixin` is for players' characters only.** It declares that an account owns the
+object, and `archive()` refuses one that names no owner. Most games type their NPCs and mobs as
+Character subclasses to inherit combat and movement — those take `ArchivableObjectMixin`, which gives
+them the same identity and the same round trip without the ownership.
+
+If your typeclass already overrides the creation hook, call `super()` as usual and the identity is
+still minted:
 
 ```python
 def at_object_creation(self):
     super().at_object_creation()
-    self.at_archive_init()
+    ...your own setup...
 ```
 
 **Existing objects predate the mixin and have no identity.** Adding it to a typeclass affects objects
 created from then on; anything already in your database needs `at_archive_init()` called on it once,
-which is safe to run repeatedly and never overwrites an identity that already exists.
+which is safe to run repeatedly and never overwrites an identity that already exists. The owner stamp
+and the ownership locks are written at character creation too, so a character that predates
+`ArchivableAccountMixin` keeps its primary-key locks until an account calls
+`at_post_create_character(character)` on it — which is also what a game with its own chargen calls,
+if it builds characters without going through `create_character`.
 
 ## Why the router list is appended, never assigned
 

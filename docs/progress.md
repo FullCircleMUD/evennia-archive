@@ -3,6 +3,41 @@
 Reverse-chronological milestone log. Newest first. Each entry states what became true and what proves
 it.
 
+## 2026-09-03 — Three kinds of mixin, and a lock that survives a restore
+
+**Attributes are copied as values, so the idmapper cannot answer for them.** Evennia's `Attribute` is
+a `SharedMemoryModel`, and the idmapper caches instances on primary key alone with no database in the
+key. Both databases number their attributes from 1, so archiving an account put its rows into the
+cache and archiving a character a moment later read them back in place of its own — the character's
+archived copy held the account's attributes, and its owner stamp and current shard were lost. Proved
+by dumping the same live row two ways: raw SQL said `archive_id`, the ORM said `scaling_username`.
+`_replace_attributes` and `_restore_attributes` are now one `_copy_attributes` parameterised by
+alias, reading with `values()` and writing with `bulk_create`. `_purge_attributes` gained the same
+alias parameter and switched to raw deletes, because `QuerySet.delete()` cannot fast-path `Attribute`
+and would build every row as an object on the way to removing it. Cases `PG-01`–`08`, `CP-01`–`12`.
+
+**Four `archive()` cases were reading the archive through the idmapper and had never tested it.**
+`ObjectDB.objects.using("archive").get(pk=...)` is answered from the live cache — the probe fetched a
+Room where it asked for the archived character. `AR-04` and `AR-05` passed only because the defect
+cached the right values under the right numbers; `AR-07` and `AR-08` assert negatives and passed
+whatever came back. All four now read as values.
+
+**`ArchivableMixin` is replaced by three kind-specific mixins**, children of `ArchivableBaseMixin`:
+`ArchivableObjectMixin`, `ArchivableCharacterMixin` and `ArchivableAccountMixin`. The base owns the
+identity and refuses its own creation hooks, so a typeclass carrying it directly fails where the
+mistake is made rather than at the first archive. `_identity_of` tests the base, so every child
+qualifies — proved by narrowing it to a child and watching thirteen tests fail.
+
+**A character's ownership survives a restore.** `ArchivableAccountMixin.at_post_create_character`
+stamps the character with the account's `archive_id` and replaces the `puppet`, `edit` and `delete`
+locks Evennia writes with primary keys baked in. Those keys change on every restore, so the locks
+came back naming objects that no longer existed and the owning account was refused its own character.
+The replacement is `owns_character()`, a lock function the library now ships, which compares the
+accessor's identity to the character's stamp and carries no value in the lockstring. Cases `ID-09`,
+`AM-03`–`AM-12`, `CM-02`–`CM-04`, `AR-11`, `LF-01`–`LF-06`.
+
+107 tests.
+
 ## 2026-09-01 — The mixin is the contract, and the library has a log of its own
 
 **`ArchivableMixin` is now required, not merely offered.** `_identity_of` used to accept anything

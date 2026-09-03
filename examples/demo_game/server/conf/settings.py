@@ -64,6 +64,11 @@ DATABASE_ROUTERS = list(globals().get("DATABASE_ROUTERS", []))
 if _ARCHIVE_ROUTER not in DATABASE_ROUTERS:
     DATABASE_ROUTERS.append(_ARCHIVE_ROUTER)
 
+# 4. The lock function. ArchivableAccountMixin writes owns_character() into
+# a character's ownership locks; without this the clause cannot resolve and
+# every ownership check refuses.
+LOCK_FUNC_MODULES = list(LOCK_FUNC_MODULES) + ["evennia_archive.lockfuncs"]
+
 
 ######################################################################
 # Settings given in secret_settings.py override those in this file.

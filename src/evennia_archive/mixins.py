@@ -16,7 +16,7 @@ Pick the one that matches what you are archiving. They differ in which
 creation hook Evennia calls, and in what each kind needs beyond identity:
 
     ArchivableObjectMixin      anything descending from ObjectDB
-    ArchivableCharacterMixin   characters — objects an account owns
+    ArchivableCharacterMixin   player characters — the ones an account owns
     ArchivableAccountMixin     accounts
     ArchivableBaseMixin        the identity itself — not for direct use
 
@@ -46,6 +46,12 @@ import uuid
 # existing install — it is the one name in this library that cannot be
 # revised after release.
 ARCHIVE_ID_KEY = "archive_id"
+
+# The Attribute key naming the account a character belongs to, holding that
+# account's archive_id. The archive drops db_account on the way in — it is a
+# primary key, and those mean nothing in the other database — so this is the
+# only link from a character back to its owner that survives a restore.
+OWNER_ACCOUNT_KEY = "owner_account_archive_id"
 
 
 class ArchivableBaseMixin:
@@ -115,6 +121,16 @@ class ArchivableBaseMixin:
             "which mints no identity. Use ArchivableAccountMixin."
         )
 
+    def at_post_create_character(self, character, **kwargs):
+        # Only ArchivableAccountMixin implements this, so an account
+        # reaching the base's version was declared with the wrong mixin —
+        # and its characters would go unstamped and unlocked.
+        raise NotImplementedError(
+            f"{type(self).__name__} creates characters but does not carry "
+            "ArchivableAccountMixin, so nothing stamps them with an owner "
+            "or writes them a lock that survives a restore."
+        )
+
 
 class ArchivableObjectMixin(ArchivableBaseMixin):
     """Identity for a typeclass descending from ``ObjectDB``.
@@ -138,13 +154,34 @@ class ArchivableObjectMixin(ArchivableBaseMixin):
 
 
 class ArchivableCharacterMixin(ArchivableObjectMixin):
-    """Identity for a character — an object an account owns.
+    """Identity for a player character — one an account creates and owns.
 
     A Character is an Object, so minting comes from `ArchivableObjectMixin`
     unchanged. Declaring this instead is what tells the library the object
     belongs to an account, which is what `ArchivableAccountMixin` acts on
     when the account creates it.
+
+    **Not for NPCs or mobs.** Most games type those as Character subclasses
+    to inherit combat and movement, and they have no owner to stamp. A game
+    that wants an NPC's state archived declares `ArchivableObjectMixin` on
+    it: same identity, same round trip, no ownership.
+
+    Nothing stops one being *created* without an owner — at creation there
+    is no account reference to test against, so the check has to happen
+    later. `archive()` is where it does: an object wearing this mixin with
+    no owner was not created by an account, and is refused.
     """
+
+    @property
+    def owner_account_archive_id(self):
+        """The `archive_id` of the account this character belongs to.
+
+        ``None`` when nothing has stamped it. Reading is not archiving —
+        a bare read is never an error, because the same absence is correct
+        on an NPC and wrong on a player character, and only `archive()` has
+        cause to care about the difference.
+        """
+        return self.attributes.get(OWNER_ACCOUNT_KEY, strattr=True)
 
 
 class ArchivableAccountMixin(ArchivableBaseMixin):
@@ -159,3 +196,64 @@ class ArchivableAccountMixin(ArchivableBaseMixin):
         # between this class and Evennia's in the MRO, and its hook refuses.
         super(ArchivableBaseMixin, self).at_account_creation()
         self.at_archive_init()
+
+    def get_owner_lockstring(self, character):
+        """The ownership locks written onto a character this account creates.
+
+        Evennia writes these at creation with primary keys as literals —
+        ``puppet:id(3) or pid(2) or perm(Developer) or pperm(Developer)``.
+        Both keys change on every restore, so the locks come back naming
+        objects that no longer exist and the owning account is refused its
+        own character, with nothing in any log.
+
+        `owns_character` asks the same question against values that cannot
+        drift. It reads the owner off the character's stamp, so nothing has
+        to be carried in the string and the two cannot disagree.
+
+        The permission clauses are Evennia's own, kept so an administrator
+        and a superuser get in exactly as before.
+
+        Takes the character so a consumer overriding this can vary the
+        locks by what was created; the library's own answer does not.
+        """
+        return ";".join(
+            [
+                "puppet:owns_character() or perm(Developer) or pperm(Developer)",
+                "edit:owns_character() or perm(Admin)",
+                "delete:owns_character() or perm(Admin)",
+            ]
+        )
+
+    def at_post_create_character(self, character, **kwargs):
+        """Stamp a new character with this account, and fix its locks.
+
+        Evennia's own body runs first: it adds the character to the roster,
+        sets ``_last_puppet`` for the first one, and writes the primary-key
+        locks this then replaces.
+
+        Safe to call again. A consumer whose chargen builds characters
+        without going through ``create_character`` calls this themselves,
+        so a second call has to leave the same result rather than a second
+        set of lock clauses.
+        """
+        super(ArchivableBaseMixin, self).at_post_create_character(
+            character, **kwargs
+        )
+
+        # Not every Character in a game belongs to an account. One that
+        # cannot read the stamp back has no business carrying it, and
+        # nothing should be locked to an owner it does not name.
+        if not isinstance(character, ArchivableCharacterMixin):
+            return
+
+        # Never overwrite: a character that already names an owner keeps
+        # it, so calling this from a second account cannot steal one.
+        if not character.owner_account_archive_id:
+            character.attributes.add(
+                OWNER_ACCOUNT_KEY, self.at_archive_init(), strattr=True
+            )
+
+        # An upsert per access type: LockHandler rebuilds db_lock_storage
+        # from a dict keyed on access type, so these three replace Evennia's
+        # outright and the eleven others are left as they were.
+        character.locks.add(self.get_owner_lockstring(character))

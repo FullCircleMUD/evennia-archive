@@ -26,6 +26,7 @@ All test functions live in `src/evennia_archive/tests.py`.
 | `UC` | Restore into a taken unique value |
 | `PG` | `_purge_attributes()` — clearing one row's attributes in one database |
 | `CP` | `_copy_attributes()` — moving one row's attributes between the two databases |
+| `LF` | `lockfuncs` — the lock functions the library ships |
 
 ## Fixtures
 
@@ -33,6 +34,7 @@ All test functions live in `src/evennia_archive/tests.py`.
 |---|---|
 | `databases = {"default", "archive"}` on every case class touching the archive | Django only builds test databases for aliases a class declares. Without it the archive alias is never created and every query against it raises `DatabaseOperationForbidden` |
 | Distinct `TEST["NAME"]` shared-cache URIs in `tests/test_settings.py` | Two aliases both saying `:memory:` look like one database to Django's runner, which then treats the second as a mirror of the first. The router would appear to work while both pointed at the same file — so a copy landing in the wrong alias would pass |
+| `override_settings(LOCK_FUNC_MODULES=...)` plus a `_cache_lockfuncs()` rebuild, on `LF`'s case class | Evennia's `BaseEvenniaTest` applies its own `override_settings` that **replaces** `LOCK_FUNC_MODULES` outright, so a module registered in `tests/test_settings.py` is invisible inside it. And `_LOCKFUNCS` is a process-wide cache built once on the first `LockHandler`, so overriding the setting changes nothing until the cache is rebuilt under it. Both halves are needed; either alone silently leaves the function unregistered |
 | `ArchivableTestObject` / `ArchivableTestAccount` / `ArchivableTestCharacter` | Minimal typeclasses carrying the matching kind-specific mixin. All three are needed: an account has a different creation hook, a unique username and Django's `PermissionsMixin` bolted on, and a character is the only kind an account stamps |
 
 ## Smoke
@@ -79,7 +81,7 @@ mixes the base in directly finds out at creation rather than at the first archiv
 | `ID-06` | An object without the mixin has no identity, and is therefore not archivable | `test_object_without_the_mixin_has_no_identity` |
 | `ID-07` | `at_object_creation` on the base raises `NotImplementedError`, naming the kind-specific mixins | `test_base_refuses_object_creation` |
 | `ID-08` | `at_account_creation` on the base raises the same way | `test_base_refuses_account_creation` |
-| `ID-09` | `at_post_create_character` on the base raises the same way. Only `ArchivableAccountMixin` implements it, so reaching the base's version means an account was declared with the wrong mixin | |
+| `ID-09` | `at_post_create_character` on the base raises the same way. Only `ArchivableAccountMixin` implements it, so reaching the base's version means an account was declared with the wrong mixin | `test_base_refuses_to_stamp_a_character` |
 
 `ID-07` to `ID-09` are the guard. A true abstract base is not available — Evennia's typeclasses carry
 the `TypeclassBase` metaclass, and adding `ABCMeta` to that raises a metaclass conflict at class
@@ -116,35 +118,37 @@ character is created.
 |---|---|---|
 | `AM-01` | Creating an account carrying the mixin mints an `archive_id`, via `at_account_creation` | `test_account_creation_mints_an_id` |
 | `AM-02` | An account carrying the mixin is archivable | `test_an_account_mixin_account_is_archivable` |
-| `AM-03` | `at_post_create_character` stamps the character with the account's `archive_id` | |
-| `AM-04` | The stamp is stored unpickled, so `find()` matches it by string equality rather than by pickled bytes | |
-| `AM-05` | The stamp is never overwritten — an account creating a character that already carries one leaves it alone | |
-| `AM-06` | A character typeclass that does not carry `ArchivableCharacterMixin` is left unstamped, and creating one does not raise. Not every Character in a game is a player's — and an object-mixin character is archivable but has nowhere to read the stamp back from | |
-| `AM-07` | Evennia's own `at_post_create_character` still runs: the character joins `_playable_characters`, and `_last_puppet` is set for the first one | |
-| `AM-08` | The character's `puppet` lock names the account's `archive_id`, not a primary key | |
-| `AM-09` | Its `edit` and `delete` locks do the same | |
-| `AM-10` | The rewritten locks carry no `id()` or `pid()` clause at all — a surviving one would go stale silently and grant nothing | |
+| `AM-03` | `at_post_create_character` stamps the character with the account's `archive_id` | `test_stamps_the_character_with_its_owner` |
+| `AM-04` | The stamp is stored unpickled, so `find()` matches it by string equality rather than by pickled bytes | `test_the_stamp_is_stored_unpickled` |
+| `AM-05` | The stamp is never overwritten — an account creating a character that already carries one leaves it alone | `test_the_stamp_is_never_overwritten` |
+| `AM-06` | A character typeclass that does not carry `ArchivableCharacterMixin` is left unstamped, and creating one does not raise. Not every Character in a game is a player's — and an object-mixin character is archivable but has nowhere to read the stamp back from | `test_a_character_without_the_mixin_is_left_alone` |
+| `AM-07` | Evennia's own `at_post_create_character` still runs: the character joins `_playable_characters`, and `_last_puppet` is set for the first one | `test_evennias_own_hook_still_runs` |
+| `AM-08` | The character's `puppet` lock is `owns_character() or perm(Developer) or pperm(Developer)` | `test_the_puppet_lock_uses_the_lockfunc` |
+| `AM-09` | Its `edit` and `delete` locks are `owns_character() or perm(Admin)` | `test_the_edit_and_delete_locks_use_the_lockfunc` |
+| `AM-10` | No `id()` or `pid()` clause survives on any of the three. A leftover one grants nothing and goes stale silently | `test_no_primary_key_clause_survives` |
+| `AM-11` | The permission clauses survive — a Developer can still puppet and an Admin can still edit and delete. Replacing the whole lockstring rather than the three access types would take an operator's way in with it | `test_the_permission_clauses_survive` |
+| `AM-12` | Access types the rewrite does not name come through unchanged. `control`, `view`, `tell` and the rest keep what Evennia wrote — the hook replaces three clauses, not the lockstring | `test_unnamed_access_types_survive` |
 
-`AM-08` to `AM-10` are why this mixin exists rather than a plain identity stamp. Evennia writes a
+`AM-08` to `AM-12` are why this mixin exists rather than a plain identity stamp. Evennia writes a
 character's `puppet`, `edit` and `delete` locks at creation with the account's and the character's
 primary keys as literals — `puppet:id(3) or pid(2) or perm(Developer) or pperm(Developer)`. Both keys
 change on every restore, so the locks name objects that no longer exist and the owning account is
 refused the character it owns, with nothing in any log.
 
-`attr(archive_id, <uuid>)` is the replacement. Evennia's `attr` lockfunc checks the **accessing**
-object, `puppet_object` passes the account as the accessor, and an account's `archive_id` is
-immutable — so the lock says "the accessor must be the account with this identity" and survives any
-number of round trips untouched. No custom lockfunc and no `LOCK_FUNC_MODULES` entry: `attr` is
-Evennia's own, and a uuid carries no commas or parentheses so it parses in a lockstring cleanly.
+`owns_character()` is the replacement — see the `LF` cases. It reads the owner off the character's
+stamp rather than carrying a value in the lockstring, so the lock and the stamp cannot come to name
+different accounts.
 
-The locks are removed before being written. `LockHandler.add` appends to `db_lock_storage` — the
-parsed lock takes the last definition, but the stored string keeps every earlier one, so writing over
-the top would leave a stale clause behind on every character.
-
-`AM-10` is the case that would catch a partial rewrite. `AM-08` passes as soon as one working clause
-exists, and would not notice a dead `pid()` sitting beside it.
+`AM-08` and `AM-09` prove the named clause is replaced outright rather than merged — the stale
+`id(3) or pid(2)` would still be there otherwise. `AM-12` proves the other direction: replacing three
+access types does not disturb the other eleven. `AM-10` catches a rewrite that removes too little,
+`AM-11` one that removes too much.
 
 ## `ArchivableCharacterMixin`
+
+For player characters — the ones an account creates and owns. Not for NPCs or mobs, which most
+games type as Character subclasses to inherit combat and movement and which have no owner; those
+declare `ArchivableObjectMixin` if their state is worth archiving.
 
 A Character is an Object, so this extends `ArchivableObjectMixin` and mints through the same hook.
 What it adds is the owner stamp — the only link back to an account that survives a restore, since
@@ -153,9 +157,35 @@ What it adds is the owner stamp — the only link back to an account that surviv
 | ID | Case | Test function |
 |---|---|---|
 | `CM-01` | Creating a character carrying the mixin mints an `archive_id`, inherited from the object mixin | `TestArchivableCharacterMixin.test_creation_mints_an_id` |
-| `CM-02` | `owner_account_archive_id` returns the identity of the account that created it | |
-| `CM-03` | A character created outside an account has no owner and returns `None` rather than raising | |
-| `CM-04` | A character carrying the mixin is archivable | `test_a_character_mixin_character_is_archivable` |
+| `CM-02` | `owner_account_archive_id` returns the owner account's identity | `test_owner_accessor_returns_the_stamp` |
+| `CM-03` | A character created by code or a builder rather than through an account has no owner, and reading `owner_account_archive_id` returns `None` rather than raising. Reading is not archiving — `AR-11` is where the misdeclaration is refused | `test_a_character_with_no_owner_reads_as_none` |
+| `CM-04` | A character carrying the mixin and naming an owner account is archivable | `test_a_character_mixin_character_is_archivable` |
+
+## Lock functions
+
+The library ships one lock function, in `evennia_archive/lockfuncs.py`. A consumer registers it with
+`LOCK_FUNC_MODULES += ["evennia_archive.lockfuncs"]`; without that the clause cannot resolve and every
+check using it is false, which refuses everyone rather than admitting them.
+
+`owns_character()` answers one question — is the accessor the account that owns this character. It
+reads the owner off the character's stamp rather than taking it as an argument, so the lock and the
+stamp cannot drift apart. Evennia's own `pid()` cannot be used: the identity has to survive a restore,
+and a primary key does not.
+
+| ID | Case | Test function |
+|---|---|---|
+| `LF-01` | The owning account is granted — its `archive_id` matches the character's `owner_account_archive_id` | `test_the_owning_account_is_granted` |
+| `LF-02` | A different account is refused | `test_another_account_is_refused` |
+| `LF-03` | A character with no owner: the function returns false for every accessor, including one that also has no identity. Two absent values must not compare equal and let the world in. Developers and superusers still get in, on their own clauses and on Evennia's bypass — that is the lockstring's business, not this function's | `test_a_character_with_no_owner_refuses_everyone` |
+| `LF-04` | A puppeted character as accessor resolves to its controlling account and is granted, as `pid()` does. `edit` and `delete` are checked with the character as accessor, so without this the owner would be refused | `test_a_puppeted_character_resolves_to_its_account` |
+| `LF-05` | An unpuppeted character as accessor is refused — it falls back to itself, and its own identity is not its owner's | `test_an_unpuppeted_character_is_refused` |
+| `LF-06` | Evaluated through a real lockstring: `character.access(account, "puppet")` is true with `puppet:owns_character()` on it | `test_resolves_out_of_a_real_lockstring` |
+
+`LF-03` is the one that matters. Every other case fails in the safe direction if it is written wrong;
+that one, written carelessly, grants every account access to every unowned character.
+
+`LF-06` is the only case that proves it works as a lock function rather than as a function — parsed
+out of a string, resolved through the registry, and called with the arguments Evennia chooses.
 
 ## `archive()`
 
@@ -171,6 +201,7 @@ What it adds is the owner stamp — the only link back to an account that surviv
 | `AR-08` | The location reference is dropped on the way in | `test_location_reference_is_dropped` |
 | `AR-09` | An object exposing `archive_id` without carrying one of the archivable mixins is refused — the attribute is not the contract | `test_refuses_a_hand_rolled_archive_id` |
 | `AR-10` | An object carrying an archivable mixin but never initialised raises `NotArchivable`, naming `at_archive_init()` | `test_refuses_a_mixin_object_never_initialised` |
+| `AR-11` | An object carrying `ArchivableCharacterMixin` with no owner account raises `NotArchivable`, naming `ArchivableObjectMixin`. The mixin declares that an account owns the object, and an account stamps every character it creates — so no stamp means no account created it, and the declaration is wrong | `test_refuses_a_character_with_no_owner` |
 
 `AR-09` is the case that makes the contract the mixin rather than the attribute, and it exists because
 the looser check is unsafe rather than merely untidy. `restore()` finds a live row **by `archive_id`**

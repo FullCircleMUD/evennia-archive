@@ -1,14 +1,28 @@
 # Demo gamedir for evennia-archive.
 #
-# Run from THIS directory — pip resolves relative paths against the current
-# working directory, not against this file:
+# The venv lives one level up, beside this gamedir, so both demos can share
+# it if more are added:
 #
-#     python -m venv venv
-#     source venv/bin/activate          # Windows: .\venv\Scripts\Activate.ps1
+#     libraries/evennia-archive/
+#     ├── src/evennia_archive/      the library
+#     └── examples/
+#         ├── venv/                 the environment
+#         └── demo_game/            this gamedir  ← run everything from here
+#
+# Run from THIS directory. pip resolves the relative path below against the
+# current working directory, not against this file, so `../..` only reaches
+# the library root when the current directory is demo_game:
+#
+#     python -m venv ../venv
+#     source ../venv/bin/activate       # Windows: ..\venv\Scripts\Activate.ps1
 #     pip install -r requirements.txt
 #
-# The library is installed editable from the repo root two levels up, so
-# changes to src/evennia_archive/ take effect without reinstalling.
+# The library is installed **editable**. A non-editable install copies the
+# package into site-packages and the demo then tests a snapshot rather than
+# the working tree — which fails confusingly, as an ImportError for whatever
+# was renamed since the copy was taken. If that happens, this is the fix:
+#
+#     ../venv/bin/pip install -e ../..
 
 evennia
 -e ../..
