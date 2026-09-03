@@ -26,7 +26,7 @@ from django.db.models import Q
 from django.utils import timezone
 from evennia.typeclasses.models import Attribute, Tag
 
-from .mixins import ARCHIVE_ID_KEY, ArchivableMixin
+from .mixins import ARCHIVE_ID_KEY, ArchivableBaseMixin
 from .models import ArchiveRecord
 
 ARCHIVE_ALIAS = "archive"
@@ -58,7 +58,7 @@ _DROPPED_REFERENCES = {"db_location", "db_home", "db_destination", "db_account"}
 class NotArchivable(ValueError):
     """Raised when an object has no archive identity.
 
-    Almost always means the typeclass is missing ``ArchivableMixin``, or
+    Almost always means the typeclass is missing an archivable mixin, or
     the object predates it being added. Minting one here would be worse
     than refusing: an object may already be archived under an identity it
     has since lost, and a fresh one would silently create a second copy
@@ -77,17 +77,20 @@ def _identity_of(obj):
     The mixin is what guarantees the property; an attribute guarantees
     nothing, and there is no way to check after the fact.
     """
-    if not isinstance(obj, ArchivableMixin):
+    # The base, so every kind-specific child qualifies. Testing one of the
+    # children instead would refuse the other two.
+    if not isinstance(obj, ArchivableBaseMixin):
         raise NotArchivable(
-            f"{obj!r} does not carry ArchivableMixin. Identity has to come "
-            "from the mixin, which mints a uuid4 once and never reissues it "
-            "— that is what makes archive_id safe to match rows on. Add the "
-            "mixin to its typeclass."
+            f"{obj!r} carries no archivable mixin. Identity has to come from "
+            "one, because it mints a uuid4 once and never reissues it — that "
+            "is what makes archive_id safe to match rows on. Add "
+            "ArchivableObjectMixin, ArchivableCharacterMixin or "
+            "ArchivableAccountMixin to its typeclass."
         )
     archive_id = obj.archive_id
     if not archive_id:
         raise NotArchivable(
-            f"{obj!r} carries ArchivableMixin but has no archive_id yet. "
+            f"{obj!r} carries an archivable mixin but has no archive_id yet. "
             "Call at_archive_init() on it — objects created before the mixin "
             "was added need it once, and it never overwrites."
         )
@@ -227,7 +230,7 @@ def _replace_tags(source, db_model, archived_pk):
 def archive(obj):
     """Copy ``obj`` into the archive, inserting or updating as needed.
 
-    The object must carry ``ArchivableMixin``. Returns the ArchiveRecord.
+    The object must carry an archivable mixin. Returns the ArchiveRecord.
 
     Everything written lands in one database, so a single transaction
     covers both the copy and the record pointing at it — the pointer and

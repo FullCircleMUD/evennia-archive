@@ -43,7 +43,8 @@ rebuilt one. Not published, and not yet used by a consumer game.
 
 **What exists**
 
-- `ArchivableMixin` — mints an `archive_id` at creation and never changes it
+- `ArchivableObjectMixin` / `ArchivableCharacterMixin` / `ArchivableAccountMixin` — mint an
+  `archive_id` at creation and never change it
 - `ArchiveRecord` and `ArchiveRouter` — the index into the archive, and what keeps it there
 - `archive(obj)` — copies an object in, as an upsert
 - `find(key, value, model=None)` — archive identifiers of objects matching an attribute

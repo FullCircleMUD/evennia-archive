@@ -48,7 +48,7 @@ import os
 INSTALLED_APPS += ["evennia_archive"]
 
 # Everything created in this demo should be archivable, so the base
-# typeclasses are the ones carrying ArchivableMixin.
+# typeclasses are the ones carrying an archivable mixin.
 BASE_CHARACTER_TYPECLASS = "typeclasses.characters.ArchivableCharacter"
 BASE_ACCOUNT_TYPECLASS = "typeclasses.accounts.ArchivableAccount"
 

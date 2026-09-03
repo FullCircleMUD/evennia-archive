@@ -208,7 +208,10 @@ definitions.
 
 ### As built
 
-`ArchivableMixin` in `evennia_archive.mixins`.
+`ArchivableObjectMixin`, `ArchivableCharacterMixin` and `ArchivableAccountMixin` in
+`evennia_archive.mixins`, all children of `ArchivableBaseMixin`, which owns the identity. A
+consumer picks the one matching what they are archiving; the kinds differ in which creation hook
+Evennia calls, and in what each needs beyond identity.
 
 | | |
 |---|---|

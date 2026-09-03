@@ -31,10 +31,10 @@ class Character(ObjectParent, DefaultCharacter):
 # ---------------------------------------------------------------------
 from evennia.typeclasses.attributes import AttributeProperty
 
-from evennia_archive.mixins import ArchivableMixin
+from evennia_archive.mixins import ArchivableCharacterMixin
 
 
-class ArchivableCharacter(ArchivableMixin, DefaultCharacter):
+class ArchivableCharacter(ArchivableCharacterMixin, DefaultCharacter):
     """A character the archive will accept.
 
     The mixin is the whole of what makes it archivable: it mints an

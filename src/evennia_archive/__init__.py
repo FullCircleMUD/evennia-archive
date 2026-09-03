@@ -12,10 +12,11 @@ Four calls, in ``evennia_archive.api``::
     restore(archive_id)       rebuild one in the live database
     delete(archive_id)        remove an archived copy
 
-Objects are archivable when their typeclass carries
-``evennia_archive.mixins.ArchivableMixin``, which mints the identity that
-matches a live row to its archived copy. Nothing else is archivable, and
-nothing is archived until you ask.
+Objects are archivable when their typeclass carries one of the mixins in
+``evennia_archive.mixins`` — `ArchivableObjectMixin`,
+`ArchivableCharacterMixin` or `ArchivableAccountMixin`. Each mints the
+identity that matches a live row to its archived copy. Nothing else is
+archivable, and nothing is archived until you ask.
 
 Installation — the app, a second database alias and a router — is in
 docs/archive-settings.md.

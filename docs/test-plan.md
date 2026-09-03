@@ -16,6 +16,8 @@ All test functions live in `src/evennia_archive/tests.py`.
 | `LG` | Logging |
 | `ID` | `ArchivableBaseMixin` — minting and storing the identity |
 | `OM` | `ArchivableObjectMixin` — the kind-specific mixin for objects |
+| `AM` | `ArchivableAccountMixin` — the kind-specific mixin for accounts |
+| `CM` | `ArchivableCharacterMixin` — the kind-specific mixin for characters |
 | `AR` | `archive()` |
 | `RS` | `restore()` |
 | `AC` | The same round trip on `AccountDB` rather than `ObjectDB` |
@@ -31,7 +33,7 @@ All test functions live in `src/evennia_archive/tests.py`.
 |---|---|
 | `databases = {"default", "archive"}` on every case class touching the archive | Django only builds test databases for aliases a class declares. Without it the archive alias is never created and every query against it raises `DatabaseOperationForbidden` |
 | Distinct `TEST["NAME"]` shared-cache URIs in `tests/test_settings.py` | Two aliases both saying `:memory:` look like one database to Django's runner, which then treats the second as a mirror of the first. The router would appear to work while both pointed at the same file — so a copy landing in the wrong alias would pass |
-| `ArchivableTestObject` / `ArchivableTestAccount` | Minimal typeclasses carrying the mixin. Both halves are needed: an account has a different creation hook, a unique username, and Django's `PermissionsMixin` bolted on |
+| `ArchivableTestObject` / `ArchivableTestAccount` / `ArchivableTestCharacter` | Minimal typeclasses carrying the matching kind-specific mixin. All three are needed: an account has a different creation hook, a unique username and Django's `PermissionsMixin` bolted on, and a character is the only kind an account stamps |
 
 ## Smoke
 
@@ -77,19 +79,17 @@ mixes the base in directly finds out at creation rather than at the first archiv
 | `ID-06` | An object without the mixin has no identity, and is therefore not archivable | `test_object_without_the_mixin_has_no_identity` |
 | `ID-07` | `at_object_creation` on the base raises `NotImplementedError`, naming the kind-specific mixins | `test_base_refuses_object_creation` |
 | `ID-08` | `at_account_creation` on the base raises the same way | `test_base_refuses_account_creation` |
+| `ID-09` | `at_post_create_character` on the base raises the same way. Only `ArchivableAccountMixin` implements it, so reaching the base's version means an account was declared with the wrong mixin | |
 
-`ID-07` and `ID-08` are the guard. A true abstract base is not available — Evennia's typeclasses carry
+`ID-07` to `ID-09` are the guard. A true abstract base is not available — Evennia's typeclasses carry
 the `TypeclassBase` metaclass, and adding `ABCMeta` to that raises a metaclass conflict at class
 definition, while `@abstractmethod` without `ABCMeta` enforces nothing. Refusing from the hooks is
 what is left, and it fires at the moment the mistake is made.
 
 The cost is that a subclass implementing a creation hook cannot call plain `super()` — that resolves
 to the base's refusal, because the mixin chain precedes Evennia's class in the MRO. It must skip the
-base with `super(ArchivableBaseMixin, self)`. `OM-01` is the worked example, and it fails loudly if
-anyone writes the plain form.
-
-`at_post_create_character` is not covered here. Nothing calls it on an object or a plain base, so its
-refusal is only reachable through an account, and belongs with the account mixin's cases.
+base with `super(ArchivableBaseMixin, self)`. `OM-01` and `AM-01` are the worked examples, and they
+fail loudly if anyone writes the plain form.
 
 ## `ArchivableObjectMixin`
 
@@ -98,23 +98,70 @@ The kind-specific mixin for anything descending from `ObjectDB` — and the pare
 
 | ID | Case | Test function |
 |---|---|---|
-| `OM-01` | Creating an object carrying the mixin mints an `archive_id` | `test_creation_mints_an_id` |
-| `OM-02` | An object carrying only `ArchivableObjectMixin` is archivable | |
+| `OM-01` | Creating an object carrying the mixin mints an `archive_id` | `TestArchivableObjectMixin.test_creation_mints_an_id` |
+| `OM-02` | An object carrying `ArchivableObjectMixin` is archivable — `_identity_of` tests the base, so every child qualifies | `test_an_object_mixin_object_is_archivable` |
 | `OM-03` | A consumer typeclass overriding `at_object_creation` and calling plain `super()` still mints. That is the documented usage, and it works because the consumer's `super()` lands on this mixin rather than the base — the grandparent rule binds only on children of the base | `test_a_consumer_override_calling_plain_super_still_mints` |
 | `OM-04` | A mixin sitting between this one and Evennia still gets its `at_object_creation` called. `super(ArchivableBaseMixin, self)` has to skip exactly one class, not everything up to Evennia | `test_a_mixin_below_ours_still_gets_its_hook` |
 
-`OM-02` waits on `_identity_of`, which tests `isinstance(obj, ArchivableMixin)` and so refuses an
-object carrying only the new children. Moving it to `ArchivableBaseMixin` is separate work; until it
-lands, an object mixin carries an identity the archive will not use.
-
 `OM-04` is the only case that catches a grandparent call skipping too far. `OM-01` proves the base's
 refusal is skipped; it cannot tell whether anything else was skipped with it.
+
+## `ArchivableAccountMixin`
+
+Accounts mint through a different hook, and they are the only kind with a second job: an account
+knows which characters are its own, and it is the only object holding that knowledge at the moment a
+character is created.
+
+| ID | Case | Test function |
+|---|---|---|
+| `AM-01` | Creating an account carrying the mixin mints an `archive_id`, via `at_account_creation` | `test_account_creation_mints_an_id` |
+| `AM-02` | An account carrying the mixin is archivable | `test_an_account_mixin_account_is_archivable` |
+| `AM-03` | `at_post_create_character` stamps the character with the account's `archive_id` | |
+| `AM-04` | The stamp is stored unpickled, so `find()` matches it by string equality rather than by pickled bytes | |
+| `AM-05` | The stamp is never overwritten — an account creating a character that already carries one leaves it alone | |
+| `AM-06` | A character typeclass that does not carry `ArchivableCharacterMixin` is left unstamped, and creating one does not raise. Not every Character in a game is a player's — and an object-mixin character is archivable but has nowhere to read the stamp back from | |
+| `AM-07` | Evennia's own `at_post_create_character` still runs: the character joins `_playable_characters`, and `_last_puppet` is set for the first one | |
+| `AM-08` | The character's `puppet` lock names the account's `archive_id`, not a primary key | |
+| `AM-09` | Its `edit` and `delete` locks do the same | |
+| `AM-10` | The rewritten locks carry no `id()` or `pid()` clause at all — a surviving one would go stale silently and grant nothing | |
+
+`AM-08` to `AM-10` are why this mixin exists rather than a plain identity stamp. Evennia writes a
+character's `puppet`, `edit` and `delete` locks at creation with the account's and the character's
+primary keys as literals — `puppet:id(3) or pid(2) or perm(Developer) or pperm(Developer)`. Both keys
+change on every restore, so the locks name objects that no longer exist and the owning account is
+refused the character it owns, with nothing in any log.
+
+`attr(archive_id, <uuid>)` is the replacement. Evennia's `attr` lockfunc checks the **accessing**
+object, `puppet_object` passes the account as the accessor, and an account's `archive_id` is
+immutable — so the lock says "the accessor must be the account with this identity" and survives any
+number of round trips untouched. No custom lockfunc and no `LOCK_FUNC_MODULES` entry: `attr` is
+Evennia's own, and a uuid carries no commas or parentheses so it parses in a lockstring cleanly.
+
+The locks are removed before being written. `LockHandler.add` appends to `db_lock_storage` — the
+parsed lock takes the last definition, but the stored string keeps every earlier one, so writing over
+the top would leave a stale clause behind on every character.
+
+`AM-10` is the case that would catch a partial rewrite. `AM-08` passes as soon as one working clause
+exists, and would not notice a dead `pid()` sitting beside it.
+
+## `ArchivableCharacterMixin`
+
+A Character is an Object, so this extends `ArchivableObjectMixin` and mints through the same hook.
+What it adds is the owner stamp — the only link back to an account that survives a restore, since
+`db_account` is a primary key and the archive drops it.
+
+| ID | Case | Test function |
+|---|---|---|
+| `CM-01` | Creating a character carrying the mixin mints an `archive_id`, inherited from the object mixin | `TestArchivableCharacterMixin.test_creation_mints_an_id` |
+| `CM-02` | `owner_account_archive_id` returns the identity of the account that created it | |
+| `CM-03` | A character created outside an account has no owner and returns `None` rather than raising | |
+| `CM-04` | A character carrying the mixin is archivable | `test_a_character_mixin_character_is_archivable` |
 
 ## `archive()`
 
 | ID | Case | Test function |
 |---|---|---|
-| `AR-01` | An object whose typeclass does not carry `ArchivableMixin` raises `NotArchivable` | `test_refuses_an_object_without_identity` |
+| `AR-01` | An object whose typeclass carries none of the archivable mixins raises `NotArchivable` | `test_refuses_an_object_without_identity` |
 | `AR-02` | A copy lands in the archive, and the record names the model and the key it landed under | `test_creates_a_copy_in_the_archive` |
 | `AR-03` | The copy does not land in the live database — the failure the router exists to prevent, and one that would otherwise look like success | `TestArchive.test_copy_does_not_land_in_the_live_database` |
 | `AR-04` | Attributes come across, pickled values included | `test_attributes_come_across` |
@@ -122,8 +169,8 @@ refusal is skipped; it cannot tell whether anything else was skipped with it.
 | `AR-06` | A second archive updates the existing copy rather than duplicating it, and the record still points at the same row | `test_second_archive_updates_rather_than_duplicates` |
 | `AR-07` | An attribute removed from the live object is removed from the copy | `test_removed_attributes_are_removed_from_the_copy` |
 | `AR-08` | The location reference is dropped on the way in | `test_location_reference_is_dropped` |
-| `AR-09` | An object exposing `archive_id` without the mixin is refused — the attribute is not the contract | `test_refuses_a_hand_rolled_archive_id` |
-| `AR-10` | An object carrying the mixin but never initialised raises `NotArchivable`, naming `at_archive_init()` | `test_refuses_a_mixin_object_never_initialised` |
+| `AR-09` | An object exposing `archive_id` without carrying one of the archivable mixins is refused — the attribute is not the contract | `test_refuses_a_hand_rolled_archive_id` |
+| `AR-10` | An object carrying an archivable mixin but never initialised raises `NotArchivable`, naming `at_archive_init()` | `test_refuses_a_mixin_object_never_initialised` |
 
 `AR-09` is the case that makes the contract the mixin rather than the attribute, and it exists because
 the looser check is unsafe rather than merely untidy. `restore()` finds a live row **by `archive_id`**
@@ -149,9 +196,12 @@ object created before the mixin was added looks like.
 
 ## Accounts
 
+The same round trip on `AccountDB` rather than `ObjectDB`.
+
+`AC-01` is retired. It covered a creation hook, which is `ArchivableAccountMixin`'s — see `AM-01`.
+
 | ID | Case | Test function |
 |---|---|---|
-| `AC-01` | Creating an account carrying the mixin mints an identity, via `at_account_creation` | `test_account_creation_mints_an_id` |
 | `AC-02` | The account round trip closes: username, email, attributes, tags and identity all come back | `test_round_trip_restores_the_account` |
 | `AC-03` | The record names `accountdb` as the archived model | `test_record_names_the_account_model` |
 | `AC-04` | The account copy does not land in the live database | `TestAccountRoundTrip.test_copy_does_not_land_in_the_live_database` |

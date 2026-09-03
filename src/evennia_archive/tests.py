@@ -12,7 +12,7 @@ from evennia.accounts.accounts import DefaultAccount
 from evennia.accounts.models import AccountDB
 from evennia.objects.models import ObjectDB
 from evennia.typeclasses.models import Attribute
-from evennia.objects.objects import DefaultObject
+from evennia.objects.objects import DefaultCharacter, DefaultObject
 from evennia.utils.create import create_account, create_object
 from evennia.utils.test_resources import BaseEvenniaTest
 
@@ -32,15 +32,20 @@ from evennia_archive import log as log_module
 from evennia_archive.log import archive_log
 from evennia_archive.mixins import (
     ARCHIVE_ID_KEY,
+    ArchivableAccountMixin,
     ArchivableBaseMixin,
-    ArchivableMixin,
+    ArchivableCharacterMixin,
     ArchivableObjectMixin,
 )
 from evennia_archive.models import ArchiveRecord
 
 
-class ArchivableTestObject(ArchivableMixin, DefaultObject):
-    """A minimal typeclass carrying the mixin, for tests only."""
+class ArchivableTestObject(ArchivableObjectMixin, DefaultObject):
+    """A minimal typeclass carrying the object mixin, for tests only."""
+
+
+class ArchivableTestCharacter(ArchivableCharacterMixin, DefaultCharacter):
+    """A minimal character typeclass, for the stamp and the locks."""
 
 
 class LookalikeTestObject(DefaultObject):
@@ -176,8 +181,11 @@ class TestLogShim(PlainTestCase):
         self.assertEqual(log_module._LOG_FILENAME, "archive.log")
 
 
-class TestArchivableMixin(BaseEvenniaTest):
-    """Identity is minted at creation, canonical, immutable and unpickled."""
+class TestArchivableBaseMixin(BaseEvenniaTest):
+    """Identity is minted at creation, canonical, immutable and unpickled.
+
+    Exercised through a concrete child, since the base refuses to create.
+    """
 
     def _make(self):
         return create_object(ArchivableTestObject, key="subject")
@@ -241,8 +249,41 @@ class TestArchivableMixin(BaseEvenniaTest):
         self.assertIn("ArchivableAccountMixin", str(caught.exception))
 
 
+class TestArchivableAccountMixin(BaseEvenniaTest):
+    """The kind-specific mixin for accounts."""
+
+    databases = {"default", "archive"}
+
+    def test_an_account_mixin_account_is_archivable(self):
+        """AM-02"""
+        account = create_account(
+            "rowan", "rowan@example.com", "sekritpw", typeclass=ArchivableTestAccount
+        )
+        self.assertEqual(archive(account).archive_id, account.archive_id)
+
+
+class TestArchivableCharacterMixin(BaseEvenniaTest):
+    """The kind-specific mixin for characters, extending the object one."""
+
+    databases = {"default", "archive"}
+
+    def test_creation_mints_an_id(self):
+        """CM-01"""
+        # Inherited from ArchivableObjectMixin: a Character is an Object and
+        # mints through the same hook.
+        character = create_object(ArchivableTestCharacter, key="Rowan")
+        self.assertTrue(character.archive_id)
+
+    def test_a_character_mixin_character_is_archivable(self):
+        """CM-04"""
+        character = create_object(ArchivableTestCharacter, key="Rowan")
+        self.assertEqual(archive(character).archive_id, character.archive_id)
+
+
 class TestArchivableObjectMixin(BaseEvenniaTest):
     """The kind-specific mixin for objects: it mints, and it calls up."""
+
+    databases = {"default", "archive"}
 
     def test_creation_mints_an_id(self):
         """OM-01"""
@@ -254,6 +295,13 @@ class TestArchivableObjectMixin(BaseEvenniaTest):
         obj = create_object(OverridingTestObject, key="subject")
         self.assertTrue(obj.archive_id)
         self.assertTrue(obj.db.consumer_hook_ran)
+
+    def test_an_object_mixin_object_is_archivable(self):
+        """OM-02"""
+        # _identity_of has to test the base, not one of the children —
+        # testing a child would refuse the other two kinds outright.
+        obj = create_object(ObjectMixinTestObject, key="subject")
+        self.assertEqual(archive(obj).archive_id, obj.archive_id)
 
     def test_a_mixin_below_ours_still_gets_its_hook(self):
         """OM-04"""
@@ -484,8 +532,8 @@ class TestRestore(BaseEvenniaTest):
         self.assertIsNotNone(after.last_restored)
 
 
-class ArchivableTestAccount(ArchivableMixin, DefaultAccount):
-    """A minimal account typeclass carrying the mixin, for tests only."""
+class ArchivableTestAccount(ArchivableAccountMixin, DefaultAccount):
+    """A minimal account typeclass carrying the account mixin."""
 
 
 class TestAccountRoundTrip(BaseEvenniaTest):
@@ -504,7 +552,7 @@ class TestAccountRoundTrip(BaseEvenniaTest):
         )
 
     def test_account_creation_mints_an_id(self):
-        """AC-01"""
+        """AM-01"""
         # Covers at_account_creation, which the ObjectDB tests never reach.
         self.assertTrue(self._make().archive_id)
 

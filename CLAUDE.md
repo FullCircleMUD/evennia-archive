@@ -20,7 +20,7 @@ For the design wiki, read [docs/INDEX.md](docs/INDEX.md).
 ## Project status
 
 **Working, published, not yet in production.** On PyPI as `evennia-archive` 0.1.0, and wired into
-FullCircleMUD on a branch — pinned in its requirements, `ArchivableMixin` on its account and
+FullCircleMUD on a branch — pinned in its requirements, with archivable mixins on its account and
 character typeclasses — but not merged and not deployed. All four calls — `archive()`, `find()`, `restore()`, `delete()` —
 are built and tested, and the round trip closes for both objects and accounts. References between
 objects are dropped rather than translated, and nothing has run on PostgreSQL. For current state read
@@ -50,7 +50,7 @@ Agreed in the design conversation of 2026-08-23. Every implementation decision m
    Detecting a library is a hidden dependency wearing an optional one's clothes.
 5. **Identity comes from the mixin, and only from the mixin.** The library matches rows across two
    databases by `archive_id`, and `ArchiveRecord` keys on a `UUIDField`, so the value has to be a
-   uuid4 minted once and never reissued. `ArchivableMixin` is what guarantees that; an object merely
+   uuid4 minted once and never reissued. The mixins are what guarantee that; an object merely
    exposing an `archive_id` attribute guarantees nothing, and the library cannot check after the fact
    — a value from anywhere else either fails at write time as an invalid UUID, or collides and makes
    `restore()` return the wrong object with nothing in any log. So `archive()` tests for the mixin
@@ -109,7 +109,7 @@ evennia-archive/
 ├── src/
 │   └── evennia_archive/       # library code (src layout)
 │       ├── api.py             # archive() / restore()
-│       ├── mixins.py          # ArchivableMixin
+│       ├── mixins.py          # the archivable mixins
 │       ├── models.py          # ArchiveRecord
 │       ├── db_router.py       # ArchiveRouter
 │       └── tests.py           # unit tests (run via runtests.py)

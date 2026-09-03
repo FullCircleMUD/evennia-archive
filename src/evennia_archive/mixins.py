@@ -1,16 +1,24 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """
-ArchivableMixin — marks a typeclass as archivable and gives it a stable identity.
+The mixins that mark a typeclass as archivable and give it a stable identity.
 
-Mix into any typeclass whose objects you want archived — characters,
+Mix one into any typeclass whose objects you want archived — characters,
 accounts, ships, guild halls. The library archives nothing that does not
-carry this mixin, so adding it is the consumer's declaration of intent
-rather than something the library infers.
+carry one, so adding it is the consumer's declaration of intent rather than
+something the library infers.
 
-What it provides is one thing: an ``archive_id``, minted once when the
+What they provide is one thing: an ``archive_id``, minted once when the
 object is created and never changed afterwards. Primary keys are
 meaningless across two databases, so this is what lets a row in the live
 game and a row in the archive be known to be the same object.
+
+Pick the one that matches what you are archiving. They differ in which
+creation hook Evennia calls, and in what each kind needs beyond identity:
+
+    ArchivableObjectMixin      anything descending from ObjectDB
+    ArchivableCharacterMixin   characters — objects an account owns
+    ArchivableAccountMixin     accounts
+    ArchivableBaseMixin        the identity itself — not for direct use
 
 Rules:
     archive_id is minted at creation   → never at archive time
@@ -21,15 +29,15 @@ Rules:
 Usage — the mixin hooks creation itself, so most consumers add it and
 stop:
 
-    class Character(ArchivableMixin, DefaultCharacter):
+    class Character(ArchivableObjectMixin, DefaultCharacter):
         pass
 
-If your typeclass already overrides the creation hook, call the init
-directly instead:
+If your typeclass already overrides the creation hook, call `super()` as
+usual and the identity is still minted:
 
     def at_object_creation(self):
         super().at_object_creation()
-        self.at_archive_init()
+        ...your own setup...
 """
 
 import uuid
@@ -57,7 +65,7 @@ class ArchivableBaseMixin:
     calls up.** The mixin chain precedes Evennia's own class in the MRO, so
     plain ``super()`` from a child lands on the refusal below rather than on
     Evennia's hook. Use ``super(ArchivableBaseMixin, self)``, which resumes
-    after this class. `ArchivableMixin` below is the worked example.
+    after this class. `ArchivableObjectMixin` below is the worked example.
     """
 
     @property
@@ -129,19 +137,25 @@ class ArchivableObjectMixin(ArchivableBaseMixin):
         self.at_archive_init()
 
 
-class ArchivableMixin(ArchivableBaseMixin):
-    """Gives a typeclass a stable identity for archiving."""
+class ArchivableCharacterMixin(ArchivableObjectMixin):
+    """Identity for a character — an object an account owns.
 
-    # Evennia calls exactly one of these, depending on what the mixin was
-    # mixed into. The other is simply never invoked.
-    #
-    # super(ArchivableBaseMixin, self) rather than super(): the base sits
-    # between this class and Evennia's in the MRO, and its hook refuses.
+    A Character is an Object, so minting comes from `ArchivableObjectMixin`
+    unchanged. Declaring this instead is what tells the library the object
+    belongs to an account, which is what `ArchivableAccountMixin` acts on
+    when the account creates it.
+    """
 
-    def at_object_creation(self):
-        super(ArchivableBaseMixin, self).at_object_creation()
-        self.at_archive_init()
+
+class ArchivableAccountMixin(ArchivableBaseMixin):
+    """Identity for an account.
+
+    Accounts mint through ``at_account_creation`` rather than the object
+    hook, which is the whole reason the kinds are separate classes.
+    """
 
     def at_account_creation(self):
+        # super(ArchivableBaseMixin, self), not super(): the base sits
+        # between this class and Evennia's in the MRO, and its hook refuses.
         super(ArchivableBaseMixin, self).at_account_creation()
         self.at_archive_init()

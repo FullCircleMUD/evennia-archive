@@ -33,13 +33,24 @@ a consumer never writes one.
 
 ## Marking typeclasses as archivable
 
-Settings alone archive nothing. **The library only archives objects whose typeclass carries
-`ArchivableMixin`**, so mixing it in is how a consumer says which of their objects matter:
+Settings alone archive nothing. **The library only archives objects whose typeclass carries one of
+its mixins**, so mixing one in is how a consumer says which of their objects matter. Pick the one
+matching what you are archiving:
 
 ```python
-from evennia_archive.mixins import ArchivableMixin
+from evennia_archive.mixins import (
+    ArchivableAccountMixin,
+    ArchivableCharacterMixin,
+    ArchivableObjectMixin,
+)
 
-class Character(ArchivableMixin, DefaultCharacter):
+class Character(ArchivableCharacterMixin, DefaultCharacter):
+    pass
+
+class Account(ArchivableAccountMixin, DefaultAccount):
+    pass
+
+class Ship(ArchivableObjectMixin, DefaultObject):
     pass
 ```
 

@@ -153,10 +153,10 @@ class Guest(DefaultGuest):
 # ---------------------------------------------------------------------
 from evennia.typeclasses.attributes import AttributeProperty
 
-from evennia_archive.mixins import ArchivableMixin
+from evennia_archive.mixins import ArchivableAccountMixin
 
 
-class ArchivableAccount(ArchivableMixin, DefaultAccount):
+class ArchivableAccount(ArchivableAccountMixin, DefaultAccount):
     """An account the archive will accept.
 
     Same deal as ArchivableCharacter: the mixin mints the identity at
