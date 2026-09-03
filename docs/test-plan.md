@@ -128,6 +128,7 @@ character is created.
 | `AM-10` | No `id()` or `pid()` clause survives on any of the three. A leftover one grants nothing and goes stale silently | `test_no_primary_key_clause_survives` |
 | `AM-11` | The permission clauses survive — a Developer can still puppet and an Admin can still edit and delete. Replacing the whole lockstring rather than the three access types would take an operator's way in with it | `test_the_permission_clauses_survive` |
 | `AM-12` | Access types the rewrite does not name come through unchanged. `control`, `view`, `tell` and the rest keep what Evennia wrote — the hook replaces three clauses, not the lockstring | `test_unnamed_access_types_survive` |
+| `AM-13` | Two characters created by the same account carry the same stamp. It is the account's identity rather than anything derived from the character, which is what lets a consumer find a whole roster by one value | `test_two_characters_share_the_owner_stamp` |
 
 `AM-08` to `AM-12` are why this mixin exists rather than a plain identity stamp. Evennia writes a
 character's `puppet`, `edit` and `delete` locks at creation with the account's and the character's

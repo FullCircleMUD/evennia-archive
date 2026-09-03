@@ -428,6 +428,22 @@ class TestArchivableAccountMixin(BaseEvenniaTest):
         self.assertIn("perm(Admin)", character.locks.get("edit"))
         self.assertIn("perm(Admin)", character.locks.get("delete"))
 
+    def test_two_characters_share_the_owner_stamp(self):
+        """AM-13"""
+        # The stamp is the account's identity, not anything derived from the
+        # character. That is what lets a consumer find a whole roster by one
+        # value rather than one character at a time.
+        account = self._account()
+        first = create_object(ArchivableTestCharacter, key="Rowan")
+        second = create_object(ArchivableTestCharacter, key="Bramble")
+        account.at_post_create_character(first)
+        account.at_post_create_character(second)
+
+        self.assertEqual(
+            first.owner_account_archive_id, second.owner_account_archive_id
+        )
+        self.assertEqual(first.owner_account_archive_id, account.archive_id)
+
     def test_unnamed_access_types_survive(self):
         """AM-12"""
         # locks.add is an upsert per access type: the ones it names are
