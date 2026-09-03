@@ -34,6 +34,7 @@ from evennia_archive.mixins import (
     ARCHIVE_ID_KEY,
     ArchivableBaseMixin,
     ArchivableMixin,
+    ArchivableObjectMixin,
 )
 from evennia_archive.models import ArchiveRecord
 
@@ -66,6 +67,35 @@ class BaseOnlyTestObject(ArchivableBaseMixin, DefaultObject):
 
 class BaseOnlyTestAccount(ArchivableBaseMixin, DefaultAccount):
     """The same mistake on an account — `ID-08`."""
+
+
+class ObjectMixinTestObject(ArchivableObjectMixin, DefaultObject):
+    """The kind-specific mixin, declared the way a consumer would."""
+
+
+class OverridingTestObject(ArchivableObjectMixin, DefaultObject):
+    """A consumer overriding the hook — `OM-03`.
+
+    Plain ``super()`` here is correct and documented: it lands on
+    `ArchivableObjectMixin`, not on the base. The grandparent rule binds
+    only on children of the base, which is the library's own business.
+    """
+
+    def at_object_creation(self):
+        super().at_object_creation()
+        self.db.consumer_hook_ran = True
+
+
+class MarkerMixin:
+    """A consumer mixin sitting between ours and Evennia's — `OM-04`."""
+
+    def at_object_creation(self):
+        super().at_object_creation()
+        self.db.marker_hook_ran = True
+
+
+class LayeredTestObject(ArchivableObjectMixin, MarkerMixin, DefaultObject):
+    """`OM-04` — the marker must not be skipped on the way to Evennia."""
 
 
 class TestPackageInstalls(PlainTestCase):
@@ -152,11 +182,6 @@ class TestArchivableMixin(BaseEvenniaTest):
     def _make(self):
         return create_object(ArchivableTestObject, key="subject")
 
-    def test_creation_mints_an_id(self):
-        """OM-01"""
-        obj = self._make()
-        self.assertTrue(obj.archive_id)
-
     def test_minted_id_is_a_canonical_uuid(self):
         """ID-02"""
         obj = self._make()
@@ -214,6 +239,31 @@ class TestArchivableMixin(BaseEvenniaTest):
                 typeclass=BaseOnlyTestAccount,
             )
         self.assertIn("ArchivableAccountMixin", str(caught.exception))
+
+
+class TestArchivableObjectMixin(BaseEvenniaTest):
+    """The kind-specific mixin for objects: it mints, and it calls up."""
+
+    def test_creation_mints_an_id(self):
+        """OM-01"""
+        obj = create_object(ObjectMixinTestObject, key="subject")
+        self.assertTrue(obj.archive_id)
+
+    def test_a_consumer_override_calling_plain_super_still_mints(self):
+        """OM-03"""
+        obj = create_object(OverridingTestObject, key="subject")
+        self.assertTrue(obj.archive_id)
+        self.assertTrue(obj.db.consumer_hook_ran)
+
+    def test_a_mixin_below_ours_still_gets_its_hook(self):
+        """OM-04"""
+        # super(ArchivableBaseMixin, self) has to resume immediately after
+        # the base. Skipping further would silently drop every hook between
+        # us and Evennia — a consumer's mixin would stop running with
+        # nothing to show for it.
+        obj = create_object(LayeredTestObject, key="subject")
+        self.assertTrue(obj.archive_id)
+        self.assertTrue(obj.db.marker_hook_ran)
 
 
 class TestArchive(BaseEvenniaTest):

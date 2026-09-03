@@ -108,6 +108,27 @@ class ArchivableBaseMixin:
         )
 
 
+class ArchivableObjectMixin(ArchivableBaseMixin):
+    """Identity for a typeclass descending from ``ObjectDB``.
+
+    Also the parent of `ArchivableCharacterMixin`: a Character is an Object
+    and mints through this same hook, so the character mixin adds what
+    characters need rather than repeating this.
+
+    A consumer overriding ``at_object_creation`` calls plain ``super()`` as
+    usual — that lands here, not on the base. The grandparent form below is
+    the library's own business.
+    """
+
+    def at_object_creation(self):
+        # super(ArchivableBaseMixin, self), not super(): the base sits
+        # between this class and Evennia's in the MRO, and its hook refuses.
+        # Resuming after the base skips exactly that one class, so a
+        # consumer's own mixin further down still gets called.
+        super(ArchivableBaseMixin, self).at_object_creation()
+        self.at_archive_init()
+
+
 class ArchivableMixin(ArchivableBaseMixin):
     """Gives a typeclass a stable identity for archiving."""
 

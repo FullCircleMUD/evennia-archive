@@ -99,8 +99,16 @@ The kind-specific mixin for anything descending from `ObjectDB` — and the pare
 | ID | Case | Test function |
 |---|---|---|
 | `OM-01` | Creating an object carrying the mixin mints an `archive_id` | `test_creation_mints_an_id` |
+| `OM-02` | An object carrying only `ArchivableObjectMixin` is archivable | |
+| `OM-03` | A consumer typeclass overriding `at_object_creation` and calling plain `super()` still mints. That is the documented usage, and it works because the consumer's `super()` lands on this mixin rather than the base — the grandparent rule binds only on children of the base | `test_a_consumer_override_calling_plain_super_still_mints` |
+| `OM-04` | A mixin sitting between this one and Evennia still gets its `at_object_creation` called. `super(ArchivableBaseMixin, self)` has to skip exactly one class, not everything up to Evennia | `test_a_mixin_below_ours_still_gets_its_hook` |
 
-The rest of this section is written when the mixin is built.
+`OM-02` waits on `_identity_of`, which tests `isinstance(obj, ArchivableMixin)` and so refuses an
+object carrying only the new children. Moving it to `ArchivableBaseMixin` is separate work; until it
+lands, an object mixin carries an identity the archive will not use.
+
+`OM-04` is the only case that catches a grandparent call skipping too far. `OM-01` proves the base's
+refusal is skipped; it cannot tell whether anything else was skipped with it.
 
 ## `archive()`
 
