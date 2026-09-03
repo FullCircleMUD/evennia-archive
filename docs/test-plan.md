@@ -14,7 +14,8 @@ All test functions live in `src/evennia_archive/tests.py`.
 |---|---|
 | `SM` | Smoke — the package installs and Django loads it |
 | `LG` | Logging |
-| `ID` | `ArchivableMixin` — minting and storing the identity |
+| `ID` | `ArchivableBaseMixin` — minting and storing the identity |
+| `OM` | `ArchivableObjectMixin` — the kind-specific mixin for objects |
 | `AR` | `archive()` |
 | `RS` | `restore()` |
 | `AC` | The same round trip on `AccountDB` rather than `ObjectDB` |
@@ -59,16 +60,47 @@ avoids.
 emits a line. `[TBD — needs discussion: what archive should log. The candidates are the four public
 calls and the two refusal paths in `_identity_of`, but nothing has been agreed.]`
 
-## Identity — `ArchivableMixin`
+## Identity — `ArchivableBaseMixin`
+
+The parent of the three kind-specific mixins. It owns the identity — `archive_id` and
+`at_archive_init()` — and nothing else. Its creation hooks exist only to refuse, so a consumer who
+mixes the base in directly finds out at creation rather than at the first archive.
+
+`ID-01` is retired. It covered a creation hook, which is `ArchivableObjectMixin`'s — see `OM-01`.
 
 | ID | Case | Test function |
 |---|---|---|
-| `ID-01` | Creating an object carrying the mixin mints an `archive_id` | `test_creation_mints_an_id` |
 | `ID-02` | The minted value is a canonical UUID — round-tripping it through `uuid.UUID` and back is a no-op, which is what makes plain string equality a safe lookup | `test_minted_id_is_a_canonical_uuid` |
 | `ID-03` | `at_archive_init()` never overwrites: calling it again returns the existing identity unchanged | `test_init_is_idempotent` |
 | `ID-04` | Two objects mint different identities | `test_ids_are_unique_across_objects` |
 | `ID-05` | The identity is stored unpickled — `db_strvalue` set, `db_value` null. Flipping this would make every lookup a byte comparison whose stability depends on the pickle protocol, and would silently orphan existing installs | `test_stored_unpickled_in_strvalue` |
 | `ID-06` | An object without the mixin has no identity, and is therefore not archivable | `test_object_without_the_mixin_has_no_identity` |
+| `ID-07` | `at_object_creation` on the base raises `NotImplementedError`, naming the kind-specific mixins | `test_base_refuses_object_creation` |
+| `ID-08` | `at_account_creation` on the base raises the same way | `test_base_refuses_account_creation` |
+
+`ID-07` and `ID-08` are the guard. A true abstract base is not available — Evennia's typeclasses carry
+the `TypeclassBase` metaclass, and adding `ABCMeta` to that raises a metaclass conflict at class
+definition, while `@abstractmethod` without `ABCMeta` enforces nothing. Refusing from the hooks is
+what is left, and it fires at the moment the mistake is made.
+
+The cost is that a subclass implementing a creation hook cannot call plain `super()` — that resolves
+to the base's refusal, because the mixin chain precedes Evennia's class in the MRO. It must skip the
+base with `super(ArchivableBaseMixin, self)`. `OM-01` is the worked example, and it fails loudly if
+anyone writes the plain form.
+
+`at_post_create_character` is not covered here. Nothing calls it on an object or a plain base, so its
+refusal is only reachable through an account, and belongs with the account mixin's cases.
+
+## `ArchivableObjectMixin`
+
+The kind-specific mixin for anything descending from `ObjectDB` — and the parent of
+`ArchivableCharacterMixin`, since a Character is an Object and mints its identity the same way.
+
+| ID | Case | Test function |
+|---|---|---|
+| `OM-01` | Creating an object carrying the mixin mints an `archive_id` | `test_creation_mints_an_id` |
+
+The rest of this section is written when the mixin is built.
 
 ## `archive()`
 

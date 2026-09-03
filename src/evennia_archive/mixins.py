@@ -40,8 +40,25 @@ import uuid
 ARCHIVE_ID_KEY = "archive_id"
 
 
-class ArchivableMixin:
-    """Gives a typeclass a stable identity for archiving."""
+class ArchivableBaseMixin:
+    """The archive identity, and nothing else.
+
+    Owns ``archive_id`` and ``at_archive_init()``. Its creation hooks exist
+    only to refuse: a typeclass carrying this directly has no working hook,
+    so it would exist without an identity and only reveal that at the first
+    archive. Refusing at creation puts the failure where the mistake is.
+
+    A true abstract base is not available. Evennia's typeclasses carry the
+    ``TypeclassBase`` metaclass, and adding ``ABCMeta`` to that raises a
+    metaclass conflict at class definition; ``@abstractmethod`` without
+    ``ABCMeta`` enforces nothing.
+
+    **A subclass implementing a creation hook must skip this class when it
+    calls up.** The mixin chain precedes Evennia's own class in the MRO, so
+    plain ``super()`` from a child lands on the refusal below rather than on
+    Evennia's hook. Use ``super(ArchivableBaseMixin, self)``, which resumes
+    after this class. `ArchivableMixin` below is the worked example.
+    """
 
     @property
     def archive_id(self):
@@ -75,13 +92,35 @@ class ArchivableMixin:
         self.attributes.add(ARCHIVE_ID_KEY, minted, strattr=True)
         return minted
 
+    def at_object_creation(self):
+        # Characters reach this too — a Character is an Object, and mints
+        # its identity through the same hook.
+        raise NotImplementedError(
+            f"{type(self).__name__} carries ArchivableBaseMixin directly, "
+            "which mints no identity. Use ArchivableObjectMixin, or "
+            "ArchivableCharacterMixin for a character."
+        )
+
+    def at_account_creation(self):
+        raise NotImplementedError(
+            f"{type(self).__name__} carries ArchivableBaseMixin directly, "
+            "which mints no identity. Use ArchivableAccountMixin."
+        )
+
+
+class ArchivableMixin(ArchivableBaseMixin):
+    """Gives a typeclass a stable identity for archiving."""
+
     # Evennia calls exactly one of these, depending on what the mixin was
     # mixed into. The other is simply never invoked.
+    #
+    # super(ArchivableBaseMixin, self) rather than super(): the base sits
+    # between this class and Evennia's in the MRO, and its hook refuses.
 
     def at_object_creation(self):
-        super().at_object_creation()
+        super(ArchivableBaseMixin, self).at_object_creation()
         self.at_archive_init()
 
     def at_account_creation(self):
-        super().at_account_creation()
+        super(ArchivableBaseMixin, self).at_account_creation()
         self.at_archive_init()

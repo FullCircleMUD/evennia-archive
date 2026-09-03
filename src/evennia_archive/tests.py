@@ -30,7 +30,11 @@ from evennia_archive.api import (
 )
 from evennia_archive import log as log_module
 from evennia_archive.log import archive_log
-from evennia_archive.mixins import ARCHIVE_ID_KEY, ArchivableMixin
+from evennia_archive.mixins import (
+    ARCHIVE_ID_KEY,
+    ArchivableBaseMixin,
+    ArchivableMixin,
+)
 from evennia_archive.models import ArchiveRecord
 
 
@@ -49,6 +53,19 @@ class LookalikeTestObject(DefaultObject):
     @property
     def archive_id(self):
         return "hand-rolled-identity"
+
+
+class BaseOnlyTestObject(ArchivableBaseMixin, DefaultObject):
+    """The mistake `ID-07` guards against — the base mixed in directly.
+
+    The base owns the identity and nothing else. A typeclass declaring it
+    instead of `ArchivableObjectMixin` gets no creation hook that works,
+    so the base refuses rather than letting the object exist without one.
+    """
+
+
+class BaseOnlyTestAccount(ArchivableBaseMixin, DefaultAccount):
+    """The same mistake on an account — `ID-08`."""
 
 
 class TestPackageInstalls(PlainTestCase):
@@ -136,7 +153,7 @@ class TestArchivableMixin(BaseEvenniaTest):
         return create_object(ArchivableTestObject, key="subject")
 
     def test_creation_mints_an_id(self):
-        """ID-01"""
+        """OM-01"""
         obj = self._make()
         self.assertTrue(obj.archive_id)
 
@@ -176,6 +193,27 @@ class TestArchivableMixin(BaseEvenniaTest):
         """ID-06"""
         plain = create_object(DefaultObject, key="plain")
         self.assertFalse(hasattr(plain, "archive_id"))
+
+    def test_base_refuses_object_creation(self):
+        """ID-07"""
+        # A true abstract base is not available — Evennia's TypeclassBase
+        # metaclass conflicts with ABCMeta — so refusing from the hook is
+        # the guard, and it fires where the mistake is made rather than at
+        # the first archive.
+        with self.assertRaises(NotImplementedError) as caught:
+            create_object(BaseOnlyTestObject, key="misdeclared")
+        self.assertIn("ArchivableObjectMixin", str(caught.exception))
+
+    def test_base_refuses_account_creation(self):
+        """ID-08"""
+        with self.assertRaises(NotImplementedError) as caught:
+            create_account(
+                "misdeclared",
+                "misdeclared@example.com",
+                "sekritpw",
+                typeclass=BaseOnlyTestAccount,
+            )
+        self.assertIn("ArchivableAccountMixin", str(caught.exception))
 
 
 class TestArchive(BaseEvenniaTest):
