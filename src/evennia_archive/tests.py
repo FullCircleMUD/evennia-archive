@@ -21,6 +21,8 @@ from evennia_archive.api import (
     NotArchivable,
     NotArchived,
     RENAMED_FROM_KEY,
+    _copy_attributes,
+    _purge_attributes,
     archive,
     delete,
     find,
@@ -236,18 +238,21 @@ class TestArchive(BaseEvenniaTest):
         obj.db.skills = {"blades": 3}
         record = archive(obj)
 
-        copy = ObjectDB.objects.using("archive").get(pk=record.archived_pk)
-        values = {a.db_key: a.value for a in copy.db_attributes.all()}
-        self.assertEqual(values["level"], 12)
-        self.assertEqual(values["skills"], {"blades": 3})
+        # Read as values, never as instances. ObjectDB is a
+        # SharedMemoryModel, so .get() consults the idmapper — which is
+        # keyed on pk with no database in the key — and hands back
+        # whichever live object holds that number.
+        copied = _attr_rows("archive", _link_ids("archive", ObjectDB, record.archived_pk))
+        source = _attr_rows("default", _link_ids("default", ObjectDB, obj.pk))
+        self.assertEqual(copied["level"]["db_value"], source["level"]["db_value"])
+        self.assertEqual(copied["skills"]["db_value"], source["skills"]["db_value"])
 
     def test_identity_comes_across(self):
         """AR-05"""
         obj = self._make()
         record = archive(obj)
-        copy = ObjectDB.objects.using("archive").get(pk=record.archived_pk)
-        stored = {a.db_key: a.db_strvalue for a in copy.db_attributes.all()}
-        self.assertEqual(stored[ARCHIVE_ID_KEY], obj.archive_id)
+        copied = _attr_rows("archive", _link_ids("archive", ObjectDB, record.archived_pk))
+        self.assertEqual(copied[ARCHIVE_ID_KEY]["db_strvalue"], obj.archive_id)
 
     def test_second_archive_updates_rather_than_duplicates(self):
         """AR-06"""
@@ -276,8 +281,11 @@ class TestArchive(BaseEvenniaTest):
         del obj.db.doomed
         record = archive(obj)
 
-        copy = ObjectDB.objects.using("archive").get(pk=record.archived_pk)
-        self.assertNotIn("doomed", [a.db_key for a in copy.db_attributes.all()])
+        copied = _attr_keys("archive", _link_ids("archive", ObjectDB, record.archived_pk))
+        # A positive alongside the negative: a read that returned the wrong
+        # object would also not contain "doomed", and would say nothing.
+        self.assertIn(ARCHIVE_ID_KEY, copied)
+        self.assertNotIn("doomed", copied)
 
     def test_location_reference_is_dropped(self):
         """AR-08"""
@@ -285,8 +293,18 @@ class TestArchive(BaseEvenniaTest):
         obj = self._make(location=room)
         record = archive(obj)
 
-        copy = ObjectDB.objects.using("archive").get(pk=record.archived_pk)
-        self.assertIsNone(copy.db_location_id)
+        copied = (
+            ObjectDB.objects.using("archive")
+            .filter(pk=record.archived_pk)
+            .values("db_key", "db_location_id")
+            .first()
+        )
+        # The key confirms this is the archived row and not whatever the
+        # idmapper holds at that number — every object has a null location
+        # until something sets one, so the assertion below is only
+        # meaningful once the row is identified.
+        self.assertEqual(copied["db_key"], obj.db_key)
+        self.assertIsNone(copied["db_location_id"])
 
 
 class TestRestore(BaseEvenniaTest):
@@ -663,3 +681,382 @@ class TestRestoreUniqueCollision(BaseEvenniaTest):
         restored = restore(archive_id)
         self.assertEqual(restored.db_key, "Rowan")
         self.assertIsNone(restored.attributes.get(RENAMED_FROM_KEY))
+
+
+# Named here rather than taken from the library's own _link_fields: a test
+# that works out the schema the same way the code does would agree with it
+# even when both are wrong.
+_OWNER_COLUMN = {ObjectDB: "objectdb_id", AccountDB: "accountdb_id"}
+
+
+def _link_ids(alias, db_model, owner_pk):
+    """Attribute ids linked to one row, read without instantiating anything.
+
+    values_list throughout, deliberately. An assertion that went through
+    the ORM could be handed a cached instance from the other database and
+    report the wrong answer — which is the defect these cases cover.
+    """
+    through = db_model.db_attributes.through
+    return sorted(
+        through.objects.using(alias)
+        .filter(**{_OWNER_COLUMN[db_model]: owner_pk})
+        .values_list("attribute_id", flat=True)
+    )
+
+
+def _attr_keys(alias, ids):
+    """The keys of the given attribute rows, in one database."""
+    return sorted(
+        Attribute.objects.using(alias)
+        .filter(pk__in=list(ids))
+        .values_list("db_key", flat=True)
+    )
+
+
+def _attr_rows(alias, ids):
+    """The given attribute rows as plain dicts, keyed by attribute key."""
+    return {
+        row["db_key"]: row
+        for row in Attribute.objects.using(alias).filter(pk__in=list(ids)).values()
+    }
+
+
+class TestPurgeAttributes(BaseEvenniaTest):
+    """_purge_attributes clears one row's attributes, in one database only.
+
+    Covered on its own because two of its properties are invisible from
+    archive() and restore(): which database it reaches, and whether it
+    builds objects on the way.
+    """
+
+    databases = {"default", "archive"}
+
+    def _archived_object(self, key="Rowan", **attrs):
+        obj = create_object(ArchivableTestObject, key=key)
+        for name, value in attrs.items():
+            obj.attributes.add(name, value)
+        return obj, archive(obj).archived_pk
+
+    def _archived_account(self, key="rowan", **attrs):
+        account = create_account(
+            key, f"{key}@example.com", "sekritpw", typeclass=ArchivableTestAccount
+        )
+        for name, value in attrs.items():
+            account.attributes.add(name, value)
+        return account, archive(account).archived_pk
+
+    def test_deletes_the_owners_attribute_rows(self):
+        """PG-01"""
+        _, archived_pk = self._archived_object(level=12, hometown="Dunmarrow")
+        ids = _link_ids("archive", ObjectDB, archived_pk)
+        self.assertTrue(ids)
+
+        _purge_attributes(ObjectDB, "archive", archived_pk)
+
+        # The rows themselves, not merely the links — and this is also
+        # what pins the ordering. A raw delete runs no cascades, so the
+        # links go first, and the ids have to be collected before that:
+        # a lazy subquery would evaluate against rows already gone and
+        # delete nothing.
+        self.assertEqual(
+            Attribute.objects.using("archive").filter(pk__in=ids).count(), 0
+        )
+
+    def test_deletes_the_owners_link_rows(self):
+        """PG-02"""
+        _, archived_pk = self._archived_object(level=12)
+        self.assertTrue(_link_ids("archive", ObjectDB, archived_pk))
+
+        _purge_attributes(ObjectDB, "archive", archived_pk)
+
+        self.assertEqual(_link_ids("archive", ObjectDB, archived_pk), [])
+
+    def test_leaves_another_owner_in_the_same_table_alone(self):
+        """PG-03"""
+        _, doomed_pk = self._archived_object(key="Rowan", level=12)
+        _, kept_pk = self._archived_object(key="Sable", level=7)
+        self.assertNotEqual(doomed_pk, kept_pk)
+        before = _link_ids("archive", ObjectDB, kept_pk)
+
+        _purge_attributes(ObjectDB, "archive", doomed_pk)
+
+        self.assertEqual(_link_ids("archive", ObjectDB, kept_pk), before)
+        self.assertIn("level", _attr_keys("archive", before))
+
+    def test_leaves_the_same_pk_under_the_other_model_alone(self):
+        """PG-04"""
+        _, account_pk = self._archived_account(wallet="rWMKPadPqT44")
+        _, object_pk = self._archived_object(level=12)
+        # The sharp case is the two sharing a number, which is the normal
+        # state of a fresh archive: nothing but the through table
+        # separates accountdb 1 from objectdb 1.
+        self.assertEqual(account_pk, object_pk)
+        before = _link_ids("archive", ObjectDB, object_pk)
+
+        _purge_attributes(AccountDB, "archive", account_pk)
+
+        self.assertEqual(_link_ids("archive", ObjectDB, object_pk), before)
+        self.assertEqual(_link_ids("archive", AccountDB, account_pk), [])
+
+    def test_leaves_the_other_database_alone(self):
+        """PG-05"""
+        obj, archived_pk = self._archived_object(level=12, hometown="Dunmarrow")
+        live_ids = _link_ids("default", ObjectDB, obj.pk)
+        self.assertTrue(live_ids)
+
+        _purge_attributes(ObjectDB, "archive", archived_pk)
+
+        # Both databases number attributes from 1, so an alias that
+        # leaked here would delete live player state.
+        self.assertEqual(_link_ids("default", ObjectDB, obj.pk), live_ids)
+        self.assertEqual(
+            Attribute.objects.using("default").filter(pk__in=live_ids).count(),
+            len(live_ids),
+        )
+
+    def test_an_owner_with_no_attributes_is_a_no_op(self):
+        """PG-06"""
+        _, archived_pk = self._archived_object(level=12)
+        _purge_attributes(ObjectDB, "archive", archived_pk)
+        self.assertEqual(_link_ids("archive", ObjectDB, archived_pk), [])
+
+        _purge_attributes(ObjectDB, "archive", archived_pk)
+
+        self.assertEqual(_link_ids("archive", ObjectDB, archived_pk), [])
+
+    def test_the_default_alias_purges_the_live_database(self):
+        """PG-07"""
+        obj, archived_pk = self._archived_object(level=12)
+        archived_ids = _link_ids("archive", ObjectDB, archived_pk)
+        self.assertTrue(_link_ids("default", ObjectDB, obj.pk))
+
+        _purge_attributes(ObjectDB, "default", obj.pk)
+
+        self.assertEqual(_link_ids("default", ObjectDB, obj.pk), [])
+        self.assertEqual(_link_ids("archive", ObjectDB, archived_pk), archived_ids)
+
+    def test_instantiates_nothing(self):
+        """PG-08"""
+        _, archived_pk = self._archived_object(level=12, hometown="Dunmarrow")
+        cache = Attribute.__dbclass__.__instance_cache__
+        cache.clear()
+
+        _purge_attributes(ObjectDB, "archive", archived_pk)
+
+        # QuerySet.delete() cannot fast-path Attribute — Evennia listens
+        # on pre_delete for every model, and the through tables hold
+        # CASCADE keys back to it — so it would build every row as an
+        # object, and the idmapper caches Attribute on pk alone with no
+        # database in the key.
+        self.assertEqual(dict(cache), {})
+
+
+class TestCopyAttributes(BaseEvenniaTest):
+    """_copy_attributes moves one row's attribute set between the databases.
+
+    The one function both directions share. Its two hazards are only
+    visible at this level: which database each end reaches, and whether
+    anything is instantiated on the way.
+    """
+
+    databases = {"default", "archive"}
+
+    def _live_object(self, key="Rowan", **attrs):
+        obj = create_object(ArchivableTestObject, key=key)
+        for name, value in attrs.items():
+            obj.attributes.add(name, value)
+        return obj
+
+    def _empty_archive_row(self, obj):
+        """An archived row for obj, with its attributes cleared."""
+        archived_pk = archive(obj).archived_pk
+        _purge_attributes(ObjectDB, "archive", archived_pk)
+        return archived_pk
+
+    def _archived_keys(self, archived_pk):
+        return _attr_keys("archive", _link_ids("archive", ObjectDB, archived_pk))
+
+    def test_every_attribute_comes_across(self):
+        """CP-01"""
+        obj = self._live_object(level=12, hometown="Dunmarrow")
+        archived_pk = self._empty_archive_row(obj)
+        source_keys = _attr_keys("default", _link_ids("default", ObjectDB, obj.pk))
+
+        _copy_attributes(ObjectDB, "default", obj.pk, "archive", archived_pk)
+
+        self.assertEqual(self._archived_keys(archived_pk), source_keys)
+
+    def test_a_pickled_value_survives(self):
+        """CP-02"""
+        obj = self._live_object(skills={"blades": 3, "lore": 1})
+        archived_pk = self._empty_archive_row(obj)
+        source = _attr_rows("default", _link_ids("default", ObjectDB, obj.pk))
+
+        _copy_attributes(ObjectDB, "default", obj.pk, "archive", archived_pk)
+
+        # The pickled blob compared as stored, rather than unpickled through
+        # the ORM — an instantiated read is the thing under suspicion.
+        copied = _attr_rows("archive", _link_ids("archive", ObjectDB, archived_pk))
+        self.assertEqual(copied["skills"]["db_value"], source["skills"]["db_value"])
+        self.assertIsNone(copied["skills"]["db_strvalue"])
+
+    def test_an_unpickled_value_survives(self):
+        """CP-03"""
+        obj = self._live_object()
+        archived_pk = self._empty_archive_row(obj)
+
+        _copy_attributes(ObjectDB, "default", obj.pk, "archive", archived_pk)
+
+        copied = _attr_rows("archive", _link_ids("archive", ObjectDB, archived_pk))
+        self.assertEqual(copied[ARCHIVE_ID_KEY]["db_strvalue"], obj.archive_id)
+        self.assertIsNone(copied[ARCHIVE_ID_KEY]["db_value"])
+
+    def test_the_whole_row_comes_across(self):
+        """CP-04"""
+        obj = self._live_object()
+        obj.attributes.add(
+            "banner", "gold", category="heraldry", lockstring="read:all()"
+        )
+        archived_pk = self._empty_archive_row(obj)
+        source = _attr_rows("default", _link_ids("default", ObjectDB, obj.pk))
+
+        _copy_attributes(ObjectDB, "default", obj.pk, "archive", archived_pk)
+
+        copied = _attr_rows("archive", _link_ids("archive", ObjectDB, archived_pk))
+        for column in ("db_category", "db_lock_storage", "db_model", "db_attrtype"):
+            self.assertEqual(copied["banner"][column], source["banner"][column])
+        self.assertEqual(copied["banner"]["db_category"], "heraldry")
+
+    def test_the_destination_mints_its_own_ids(self):
+        """CP-05"""
+        obj = self._live_object(level=12)
+        archived_pk = self._empty_archive_row(obj)
+        squatter_pk = _link_ids("default", ObjectDB, obj.pk)[0]
+
+        # A row already sitting in the destination at one of the source's
+        # ids. If the id travelled with the data, this is where it collides.
+        Attribute.objects.using("archive").bulk_create(
+            [
+                Attribute(
+                    pk=squatter_pk,
+                    db_key="squatter",
+                    db_model="objectdb",
+                    db_lock_storage="",
+                )
+            ]
+        )
+        Attribute.__dbclass__.__instance_cache__.clear()
+
+        _copy_attributes(ObjectDB, "default", obj.pk, "archive", archived_pk)
+
+        surviving = (
+            Attribute.objects.using("archive")
+            .filter(pk=squatter_pk)
+            .values_list("db_key", flat=True)
+            .first()
+        )
+        self.assertEqual(surviving, "squatter")
+        self.assertIn("level", self._archived_keys(archived_pk))
+
+    def test_the_destination_is_replaced_not_merged(self):
+        """CP-06"""
+        obj = self._live_object(level=12, doomed="here")
+        archived_pk = self._empty_archive_row(obj)
+        _copy_attributes(ObjectDB, "default", obj.pk, "archive", archived_pk)
+        self.assertIn("doomed", self._archived_keys(archived_pk))
+
+        obj.attributes.remove("doomed")
+        _copy_attributes(ObjectDB, "default", obj.pk, "archive", archived_pk)
+
+        self.assertNotIn("doomed", self._archived_keys(archived_pk))
+
+    def test_the_source_is_untouched(self):
+        """CP-07"""
+        obj = self._live_object(level=12, hometown="Dunmarrow")
+        archived_pk = self._empty_archive_row(obj)
+        before_ids = _link_ids("default", ObjectDB, obj.pk)
+        before_rows = _attr_rows("default", before_ids)
+
+        _copy_attributes(ObjectDB, "default", obj.pk, "archive", archived_pk)
+
+        self.assertEqual(_link_ids("default", ObjectDB, obj.pk), before_ids)
+        self.assertEqual(_attr_rows("default", before_ids), before_rows)
+
+    def test_copies_in_both_directions(self):
+        """CP-08"""
+        source = self._live_object(key="Rowan", level=12)
+        archived_pk = self._empty_archive_row(source)
+        _copy_attributes(ObjectDB, "default", source.pk, "archive", archived_pk)
+
+        destination = create_object(ArchivableTestObject, key="Sable")
+        _copy_attributes(ObjectDB, "archive", archived_pk, "default", destination.pk)
+
+        landed = _attr_rows("default", _link_ids("default", ObjectDB, destination.pk))
+        self.assertIn("level", landed)
+        # Replace, not merge, in this direction too: Sable's own identity is
+        # gone and Rowan's is in its place.
+        self.assertEqual(landed[ARCHIVE_ID_KEY]["db_strvalue"], source.archive_id)
+
+    def test_another_owners_attributes_are_not_swept_in(self):
+        """CP-09"""
+        obj = self._live_object(key="Rowan", level=12)
+        self._live_object(key="Sable", secret="hidden")
+        archived_pk = self._empty_archive_row(obj)
+
+        _copy_attributes(ObjectDB, "default", obj.pk, "archive", archived_pk)
+
+        self.assertNotIn("secret", self._archived_keys(archived_pk))
+
+    def test_an_owner_with_no_attributes_copies_nothing(self):
+        """CP-10"""
+        obj = self._live_object(level=12)
+        archived_pk = self._empty_archive_row(obj)
+        _purge_attributes(ObjectDB, "default", obj.pk)
+
+        _copy_attributes(ObjectDB, "default", obj.pk, "archive", archived_pk)
+
+        self.assertEqual(_link_ids("archive", ObjectDB, archived_pk), [])
+
+    def test_instantiates_nothing(self):
+        """CP-11"""
+        obj = self._live_object(level=12, hometown="Dunmarrow")
+        archived_pk = self._empty_archive_row(obj)
+        cache = Attribute.__dbclass__.__instance_cache__
+        cache.clear()
+
+        _copy_attributes(ObjectDB, "default", obj.pk, "archive", archived_pk)
+
+        self.assertEqual(dict(cache), {})
+
+    def test_survives_a_poisoned_cache(self):
+        """CP-12"""
+        obj = self._live_object(hometown="Dunmarrow")
+        archived_pk = self._empty_archive_row(obj)
+        source = _attr_rows("default", _link_ids("default", ObjectDB, obj.pk))
+        colliding_pk = source["hometown"]["id"]
+
+        Attribute.objects.using("archive").bulk_create(
+            [
+                Attribute(
+                    pk=colliding_pk,
+                    db_key="impostor",
+                    db_model="accountdb",
+                    db_strvalue="wrong",
+                    db_lock_storage="",
+                )
+            ]
+        )
+        # Clear first, or the live row is already cached at this pk and the
+        # archive read hands that back instead — the defect, in the fixture.
+        Attribute.__dbclass__.__instance_cache__.clear()
+        # Instantiating it is the poisoning: the idmapper keys on pk with no
+        # database in the key, so this now answers for the live row too.
+        poison = Attribute.objects.using("archive").get(pk=colliding_pk)
+        self.assertEqual(poison.pk, colliding_pk)
+        self.assertNotEqual(poison.db_key, "hometown")
+
+        _copy_attributes(ObjectDB, "default", obj.pk, "archive", archived_pk)
+
+        keys = self._archived_keys(archived_pk)
+        self.assertIn("hometown", keys)
+        self.assertNotIn("impostor", keys)

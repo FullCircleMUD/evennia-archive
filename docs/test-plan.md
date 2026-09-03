@@ -21,6 +21,8 @@ All test functions live in `src/evennia_archive/tests.py`.
 | `FN` | `find()` |
 | `DL` | `delete()` |
 | `UC` | Restore into a taken unique value |
+| `PG` | `_purge_attributes()` — clearing one row's attributes in one database |
+| `CP` | `_copy_attributes()` — moving one row's attributes between the two databases |
 
 ## Fixtures
 
@@ -150,3 +152,63 @@ object created before the mixin was added looks like.
 | `UC-04` | The counter climbs past several taken names | `test_counts_up_past_several_taken_names` |
 | `UC-05` | Nothing is recorded when the name was still free | `test_nothing_recorded_when_the_name_was_free` |
 | `UC-06` | Objects never collide — `ObjectDB` declares no unique fields, so a character restore can never be blocked | `test_objects_never_collide` |
+
+## `_purge_attributes()`
+
+An internal, called by both directions of the copy, and covered on its own because two of its
+properties are invisible from `archive()` and `restore()`: which database it reaches, and whether it
+builds objects on the way. Both are only checkable at this level.
+
+| ID | Case | Test function |
+|---|---|---|
+| `PG-01` | The owner's attribute rows are gone. Also pins the ordering: a raw delete runs no cascades, so the links go first — and the attribute ids have to be materialised before that, or the lazy subquery evaluates against rows that no longer exist and nothing is deleted | `test_deletes_the_owners_attribute_rows` |
+| `PG-02` | The owner's link rows are gone. Neither half may be left behind — orphan links would be restored as broken references, orphan attributes would accumulate invisibly | `test_deletes_the_owners_link_rows` |
+| `PG-03` | A second owner in the same table keeps its attributes and links | `test_leaves_another_owner_in_the_same_table_alone` |
+| `PG-04` | The same pk under the other model is untouched — purging `accountdb` 1 leaves `objectdb` 1 alone. The two share a number and nothing but the through table separates them | `test_leaves_the_same_pk_under_the_other_model_alone` |
+| `PG-05` | The other database is untouched — purging the archive leaves live rows of the same pks alone. Both databases number attributes from 1, so an alias that leaked would delete live player state | `test_leaves_the_other_database_alone` |
+| `PG-06` | An owner with no attributes is a quiet no-op, not an error | `test_an_owner_with_no_attributes_is_a_no_op` |
+| `PG-07` | Given the default alias it purges the live database — the parameter is real, not decoration. `restore()` calls it that way, where the destination is empty and the purge is therefore invisible from outside | `test_the_default_alias_purges_the_live_database` |
+| `PG-08` | Nothing is instantiated: with the idmapper cleared, a purge leaves it empty | `TestPurgeAttributes.test_instantiates_nothing` |
+
+`PG-05` and `PG-08` are the two the defect turns on; the rest are the ordinary contract.
+
+Attributes are owned outright — Evennia's `AttributeHandler` creates a new row per object and
+`do_delete_attribute` deletes the row rather than unlinking — so there is no attribute equivalent of
+`DL-07`. Tags are the ones that get shared, because `TagHandler` reaches for `create_tag`, which is a
+get-or-create.
+
+## `_copy_attributes()`
+
+The one function both directions share. It replaces `_replace_attributes` (live→archive) and
+`_restore_attributes` (archive→live), which did the same job and differed only in which database each
+end pointed at — and in that the archive-bound one read its source as model instances.
+
+| ID | Case | Test function |
+|---|---|---|
+| `CP-01` | Every attribute comes across — same keys, same count | `test_every_attribute_comes_across` |
+| `CP-02` | A pickled value survives intact (`db_value`) | `test_a_pickled_value_survives` |
+| `CP-03` | An unpickled value survives in `db_strvalue`. This is the half `find()` and `_live_pk_for` match on, so losing it breaks identity lookup rather than merely losing data | `test_an_unpickled_value_survives` |
+| `CP-04` | Category, lock string, `db_model` and `db_attrtype` all come across — the whole row, not just key and value. A wrong field list would silently strip categories | `test_the_whole_row_comes_across` |
+| `CP-05` | The destination mints its own ids: copying into a database already holding an attribute at one of the source's ids leaves that row alone and lands the copy beside it. If the id travelled with the data, this is where it collides | `test_the_destination_mints_its_own_ids` |
+| `CP-06` | The destination is replaced, not merged — an attribute on the destination row and absent from the source is gone afterwards | `test_the_destination_is_replaced_not_merged` |
+| `CP-07` | The source row is untouched: same ids, same values, still linked | `test_the_source_is_untouched` |
+| `CP-08` | The same function copies archive→live as well as live→archive. Being direction-agnostic is the point of merging the two | `test_copies_in_both_directions` |
+| `CP-09` | A second owner's attributes are not swept in — the read selects by owner, not by table | `test_another_owners_attributes_are_not_swept_in` |
+| `CP-10` | An owner with no attributes copies nothing, quietly | `test_an_owner_with_no_attributes_copies_nothing` |
+| `CP-11` | Nothing from the source database enters the idmapper: with the cache cleared, a copy leaves it empty | `TestCopyAttributes.test_instantiates_nothing` |
+| `CP-12` | Correct under a poisoned cache. With an `Attribute` from the destination database already cached at a pk the source uses, holding different content, the copy still writes the source's values | `test_survives_a_poisoned_cache` |
+
+`CP-11` and `CP-12` are the pair the defect turns on — the first says the library does not cause it,
+the second says a copy survives it when something else does. `CP-12` asserts its own precondition,
+same pk and different content, before copying: without that it passes while testing nothing.
+
+There is no case for `db_date_created`. It travels in the row like every other column and is then
+overwritten by `auto_now_add` on the way in, so there is nothing to assert that would not be pinning
+Django's behaviour rather than this library's.
+
+`PG-08` is why the purge cannot use `QuerySet.delete()`. Django only fast-deletes a model with no
+signal listeners and no inbound cascades, and `Attribute` fails both — Evennia connects `pre_delete`
+with no sender, so it listens for every model, and the through tables hold `CASCADE` keys back to it.
+So `delete()` builds every row as an object, and Evennia's idmapper caches `Attribute` instances on pk
+alone with no database in the key. An archive row and a live row of the same number are one cache
+entry.

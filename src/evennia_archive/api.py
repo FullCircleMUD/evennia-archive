@@ -21,7 +21,7 @@ live game database while appearing to maintain the archive. The reasoning
 lives in the design doc rather than here so there is one copy of it.
 """
 
-from django.db import transaction
+from django.db import DEFAULT_DB_ALIAS, transaction
 from django.db.models import Q
 from django.utils import timezone
 from evennia.typeclasses.models import Attribute, Tag
@@ -117,20 +117,72 @@ def _link_fields(through, owner_model, target_model):
     return owner, target
 
 
-def _purge_attributes(db_model, archived_pk):
-    """Delete an archived row's attributes and the links to them.
+def _purge_attributes(db_model, alias, owner_pk):
+    """Delete a row's attributes and the links to them, in one database.
 
     Attributes are owned outright by the row they hang off, so both the
-    links and the Attribute rows go.
+    links and the Attribute rows go. Tags differ — see `_purge_tag_links`.
+
+    Raw deletes, so nothing is instantiated. `QuerySet.delete()` cannot
+    fast-path Attribute: Evennia connects `pre_delete` with no sender so
+    it listens for every model, and the through tables hold CASCADE keys
+    back to Attribute. Django would therefore build every row as an
+    object, and Evennia's idmapper caches Attribute instances on pk alone
+    with no database in the key — so an archive row would answer for the
+    live row of the same number, and both databases number their
+    attributes from 1.
+
+    Links first, because a raw delete runs no cascades. The ids are
+    materialised before that: left lazy, the subquery would evaluate
+    after its own rows were gone and delete nothing.
     """
     through = db_model.db_attributes.through
     owner, target = _link_fields(through, db_model, Attribute)
 
-    links = through.objects.using(ARCHIVE_ALIAS).filter(**{f"{owner}_id": archived_pk})
-    Attribute.objects.using(ARCHIVE_ALIAS).filter(
-        pk__in=links.values_list(f"{target}_id", flat=True)
-    ).delete()
-    links.delete()
+    links = through.objects.using(alias).filter(**{f"{owner}_id": owner_pk})
+    attr_ids = list(links.values_list(f"{target}_id", flat=True))
+    links._raw_delete(alias)
+    Attribute.objects.using(alias).filter(pk__in=attr_ids)._raw_delete(alias)
+
+
+def _copy_attributes(db_model, from_alias, from_pk, to_alias, to_pk):
+    """Copy one row's attribute set from one database to the other.
+
+    One function for both directions. Archiving and restoring are the same
+    operation with the aliases swapped, and writing them separately is how
+    the archive-bound half came to read its source as model instances while
+    the other read values.
+
+    Rows in, rows out. `values()` returns dicts, so nothing from the source
+    is instantiated; `bulk_create` bypasses `save()`, so nothing written to
+    the destination is either. Evennia's idmapper caches `Attribute` on pk
+    alone with no database in the key, and the two databases number their
+    attributes independently from 1 — so one instance carrying the wrong
+    database's row answers for both, and the copy silently stores the wrong
+    attribute. See docs/design.md § The archive holds rows, not objects.
+
+    Replaces rather than merges: the destination is purged first, so an
+    attribute the source no longer has does not survive on the copy.
+
+    The id is dropped, so the destination mints its own. Nothing joins
+    across the two databases, and an id carried over would collide.
+    """
+    through = db_model.db_attributes.through
+    owner, target = _link_fields(through, db_model, Attribute)
+
+    _purge_attributes(db_model, to_alias, to_pk)
+
+    source_ids = list(
+        through.objects.using(from_alias)
+        .filter(**{f"{owner}_id": from_pk})
+        .values_list(f"{target}_id", flat=True)
+    )
+    for row in Attribute.objects.using(from_alias).filter(pk__in=source_ids).values():
+        row.pop("id", None)
+        copied = Attribute.objects.using(to_alias).bulk_create([Attribute(**row)])[0]
+        through.objects.using(to_alias).create(
+            **{f"{owner}_id": to_pk, f"{target}_id": copied.pk}
+        )
 
 
 def _purge_tag_links(db_model, archived_pk):
@@ -144,38 +196,6 @@ def _purge_tag_links(db_model, archived_pk):
     through.objects.using(ARCHIVE_ALIAS).filter(
         **{f"{owner}_id": archived_pk}
     ).delete()
-
-
-def _replace_attributes(source, db_model, archived_pk):
-    """Mirror the source's attribute set onto the archived row.
-
-    Deleted and rebuilt rather than diffed. An object that had twenty
-    attributes and now has eighteen needs two *gone*, so a diff has to
-    handle removal anyway — and at one object per call the write volume
-    is nothing.
-
-    Goes at the through table directly rather than the archived row's own
-    m2m manager: reaching that manager would mean instantiating the row.
-    See docs/design.md § The archive holds rows, not objects.
-    """
-    through = db_model.db_attributes.through
-    owner, target = _link_fields(through, db_model, Attribute)
-
-    _purge_attributes(db_model, archived_pk)
-
-    for attr in source.db_attributes.all():
-        copied = Attribute.objects.using(ARCHIVE_ALIAS).create(
-            db_key=attr.db_key,
-            db_category=attr.db_category,
-            db_value=attr.db_value,
-            db_strvalue=attr.db_strvalue,
-            db_lock_storage=attr.db_lock_storage,
-            db_model=attr.db_model,
-            db_attrtype=attr.db_attrtype,
-        )
-        through.objects.using(ARCHIVE_ALIAS).create(
-            **{f"{owner}_id": archived_pk, f"{target}_id": copied.pk}
-        )
 
 
 def _replace_tags(source, db_model, archived_pk):
@@ -255,7 +275,7 @@ def archive(obj):
                 **values
             )
 
-        _replace_attributes(obj, db_model, archived_pk)
+        _copy_attributes(db_model, DEFAULT_DB_ALIAS, obj.pk, ARCHIVE_ALIAS, archived_pk)
         _replace_tags(obj, db_model, archived_pk)
 
         record, _ = ArchiveRecord.objects.using(ARCHIVE_ALIAS).update_or_create(
@@ -353,26 +373,6 @@ def _archived_values(db_model, archived_pk):
     return values
 
 
-def _restore_attributes(db_model, archived_pk, live_pk):
-    """Recreate the archived attribute set on the restored object."""
-    through = db_model.db_attributes.through
-    owner, target = _link_fields(through, db_model, Attribute)
-
-    archived_ids = (
-        through.objects.using(ARCHIVE_ALIAS)
-        .filter(**{f"{owner}_id": archived_pk})
-        .values_list(f"{target}_id", flat=True)
-    )
-    for row in (
-        Attribute.objects.using(ARCHIVE_ALIAS).filter(pk__in=list(archived_ids)).values()
-    ):
-        row.pop("id", None)
-        restored = Attribute.objects.create(**row)
-        through.objects.create(
-            **{f"{owner}_id": live_pk, f"{target}_id": restored.pk}
-        )
-
-
 def _restore_tags(db_model, archived_pk, live_pk):
     """Reattach the archived tags, reusing live tags where they exist."""
     through = db_model.db_tags.through
@@ -459,7 +459,9 @@ def restore(archive_id, return_object=True):
         # including minting a fresh archive_id.
         # See docs/design.md § The archive holds rows, not objects.
         live_pk = db_model.objects.bulk_create([db_model(**values)])[0].pk
-        _restore_attributes(db_model, record.archived_pk, live_pk)
+        _copy_attributes(
+            db_model, ARCHIVE_ALIAS, record.archived_pk, DEFAULT_DB_ALIAS, live_pk
+        )
         _restore_tags(db_model, record.archived_pk, live_pk)
         if renamed:
             note = Attribute.objects.create(
@@ -585,7 +587,7 @@ def delete(archive_id):
             return False
 
         db_model = _model_named(record.archived_model)
-        _purge_attributes(db_model, record.archived_pk)
+        _purge_attributes(db_model, ARCHIVE_ALIAS, record.archived_pk)
         _purge_tag_links(db_model, record.archived_pk)
         db_model.objects.using(ARCHIVE_ALIAS).filter(pk=record.archived_pk).delete()
 
