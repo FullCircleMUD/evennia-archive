@@ -5,12 +5,13 @@ A second Evennia database on the same schema, migrated alongside the game and
 never run as a game, holding accounts and characters. Rebuild the world from
 source and the players survive it.
 
-Four calls, in ``evennia_archive.api``::
+Five calls, in ``evennia_archive.api``::
 
-    archive(obj)              copy an object into the archive
-    find(key, value)          archive ids of objects matching an attribute
-    restore(archive_id)       rebuild one in the live database
-    delete(archive_id)        remove an archived copy
+    archive(obj)                       copy an object into the archive
+    find_by_attribute(key, value)      archive ids of objects matching an attribute
+    find_by_column(model, col, value)  archive ids of rows matching a column
+    restore(archive_id)                rebuild one in the live database
+    delete(archive_id)                 remove an archived copy
 
 Objects are archivable when their typeclass carries one of the mixins in
 ``evennia_archive.mixins`` — `ArchivableObjectMixin`,

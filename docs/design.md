@@ -301,11 +301,12 @@ and it must land in `db_strvalue` with `db_value` null.
 
 ## Public interface
 
-Two calls. Everything else — when, how often, in response to what — belongs to the consumer.
+Everything else — when, how often, in response to what — belongs to the consumer.
 
 ```python
 archive(obj)                                                       # obj must carry the mixin
-find(key, value, model=None)                                       # → [archive_id, ...]
+find_by_attribute(key, value, model=None)                          # → [archive_id, ...]
+find_by_column(model, column, value)                               # → [archive_id, ...]
 restore(archive_id, return_object=True)
 delete(archive_id)                                                 # removes the archived copy
 ```
@@ -325,14 +326,31 @@ ever deletes a live object.
 their game recognises — a wallet address, a username, an email — and the archive has to be searchable
 by it.
 
-**`find()` searches the archive by an attribute the consumer nominates and returns a list.** A list
-rather than a single result, because the library cannot know whether the consumer's field is unique.
-Choosing between several matches is the consumer's job, as is knowing that their field *is* unique
-and taking the first.
+**`find_by_attribute()` searches the archive by an attribute the consumer nominates and returns a
+list.** A list rather than a single result, because the library cannot know whether the consumer's
+field is unique. Choosing between several matches is the consumer's job, as is knowing that their
+field *is* unique and taking the first.
 
 FCM's flow is the motivating case: a player signs with their Xaman wallet, no account exists on the
 live server, so the archive is searched by wallet address. A hit means restore; a miss means create a
 new account. The library never learns what a wallet is.
+
+**`find_by_column()` searches a real column instead, and returns the same list of identifiers.** Not
+everything worth searching on is an attribute: an account's `username` is a column on `AccountDB`, and
+without this a consumer wanting to look one up would have to duplicate it into an attribute purely to
+make it findable. Both calls hand back archive identifiers, so either one's output goes straight into
+`restore()`.
+
+**`model` is required on the column search, and optional on the attribute one.** Attribute keys are
+uniform across models — any key can be asked of any model, and a model that has never held it simply
+does not match. Columns are not: `username` exists on `accountdb` and nowhere else, so an unnarrowed
+column search would have to either raise on every model lacking the column or swallow the miss
+silently. Naming the model makes both the intent and the mistake explicit — an unknown model raises
+`LookupError`, and a column the model does not have raises `FieldDoesNotExist`, rather than either
+returning an empty list a caller would read as "no match".
+
+`_meta.get_field()` answers for `db_attributes` and `db_tags` as well as for columns, so the column is
+checked for being concrete. A relation is not something a caller can hold a value in.
 
 **Two lookup paths exist, with very different costs**, and the difference should be exposed rather
 than hidden:
@@ -345,63 +363,65 @@ than hidden:
 So a consumer whose identifying field lands in `strvalue` gets a lookup that scales; one using a
 normal attribute gets a table scan.
 
-### find() is the expensive call — defer it
+### the finds are the expensive calls — defer them
 
-**Wrap `find()` in `deferToThread`.** It is the one call in this library that can block long enough to
-be felt by every connected player, and the reasons are structural rather than incidental:
+**Wrap `find_by_attribute()` and `find_by_column()` in `deferToThread`.** They are the calls in this
+library that can block long enough to be felt by every connected player, and the reasons are
+structural rather than incidental:
 
-- **Neither value column is indexed.** `db_key` is, so a search narrows to attributes of that name
-  first — but if the key is a common one, the surviving set is still large and every row in it gets
-  compared.
+- **Neither value column is indexed.** `db_key` is, so an attribute search narrows to attributes of
+  that name first — but if the key is a common one, the surviving set is still large and every row in
+  it gets compared. A column search has no equivalent first narrowing at all.
 - **A pickled comparison is a blob comparison.** Where an unpickled search matches a short string,
-  a pickled one matches serialised bytes, and a large attribute value is a large comparison.
-- **It may search more than one model.** Left unnarrowed, the cost multiplies by the number of models
-  the archive holds.
+  a pickled one matches serialised bytes, and a large attribute value is a large comparison. This one
+  is the attribute search's alone; a column holds its value directly.
+- **An attribute search may cover more than one model.** Left unnarrowed, the cost multiplies by the
+  number of models the archive holds. The column search names its model, so it never does this.
 - **The archive may not be local.** It is expressly designed to be movable onto separate compute, at
   which point every query carries network latency the live database does not.
 
 None of that is a problem when it runs on a worker thread, and all of it is when it runs on the
-reactor. A consumer who defers nothing else should still defer this.
+reactor. A consumer who defers nothing else should still defer these.
 
 For contrast, the others are cheap: `restore()` and `delete()` resolve through `ArchiveRecord`'s
 primary key, and `archive()` writes a bounded number of rows for one object. `restore()` does carry
 one attribute lookup of its own — the check that stops a re-run duplicating — but that narrows on
 `archive_id`, which is unpickled and matches at most one row.
 
-Implementation notes for when this is written:
+Two notes on how they are built:
 
-- **Evennia's `get_by_attribute()` cannot be used directly.** It is a *manager* method ending in
+- **Evennia's `get_by_attribute()` is not used.** It is a *manager* method ending in
   `self.filter(...)`, and `.using("archive")` returns a QuerySet, which carries no manager methods.
   The library re-expresses the same filter with `.using()` itself — a few lines, and it drops a
   dependency on Evennia's manager surface.
-- **It is two hops.** Match the archived object on the consumer's attribute, then read `archive_id`
-  off that same object. The second hop wants a `values_list` join rather than loading the objects,
-  so that searching the archive does not instantiate archived objects on the searching process.
+- **Both are two hops.** Match the archived row, then map it to an identifier through `ArchiveRecord`
+  rather than reading the row. Each hop is a `values_list`, so searching the archive never
+  instantiates an archived object on the searching process.
 
 ```python
-find(key, value, model=None)
+find_by_attribute(key, value, model=None)
+find_by_column(model, column, value)
 ```
 
 **No storage mode to choose.** An attribute stored with `strattr` has `db_strvalue` set and
-`db_value` null; a normal one is the reverse. So the query matches *either* column and is correct
-whichever way the consumer stored it — one query, no mode flag, nothing for a caller to get wrong.
+`db_value` null; a normal one is the reverse. So `find_by_attribute()` matches *either* column and is
+correct whichever way the consumer stored it — one query, no mode flag, nothing for a caller to get
+wrong.
 
-**`model` is optional.** The archive knows which models it holds, because `ArchiveRecord.archived_model`
-records them, so an unnarrowed search covers all of them. Narrowing is an optimisation the consumer
-can apply when they know — a game searching by wallet address knows it wants accounts.
+**`model` is optional on the attribute search.** The archive knows which models it holds, because
+`ArchiveRecord.archived_model` records them, so an unnarrowed search covers all of them. Narrowing is
+an optimisation the consumer can apply when they know — a game searching by wallet address knows it
+wants accounts. On the column search it is required instead, for the reason given above.
 
-**A pickled comparison is type-sensitive, and that is the caller's to get right.** `find("level", 12)`
-matches an attribute stored as the integer 12; `find("level", "12")` matches nothing, silently. The
-library has no way to know what type an attribute holds, and guessing — coercing the term, or trying
-several types — would produce false matches quietly, which is worse than none. Search with a value of
-the type you stored.
+**A pickled comparison is type-sensitive, and that is the caller's to get right.**
+`find_by_attribute("level", 12)` matches an attribute stored as the integer 12;
+`find_by_attribute("level", "12")` matches nothing, silently. The library has no way to know what type
+an attribute holds, and guessing — coercing the term, or trying several types — would produce false
+matches quietly, which is worse than none. Search with a value of the type you stored.
 
-The library's own lookups are immune, because `archive_id` is stored unpickled and compared as a
-plain string. That was chosen for protocol stability; type-insensitivity is a second dividend.
-
-> **Unknown — needs a spike.** Whether attribute lookup behaves identically against a non-default
-> alias. The query shape is ordinary Django, but the pickled-value comparison has not been tested
-> across `.using()`.
+`find_by_column()` has no such trap, because a column declares its type and Django coerces the search
+term to it. The library's own lookups are immune too: `archive_id` is stored unpickled and compared as
+a plain string. That was chosen for protocol stability; type-insensitivity is a second dividend.
 
 > **Unknown — a gap this raises.** A consumer with several matches has to choose between them, and
 > `archive_id` alone tells them nothing. They would need to see something per candidate — key,
@@ -573,8 +593,8 @@ The library ships no scheduler, no hooks and no triggers. All of the following a
 - **Which thread it runs on.** Every call in this library is a plain synchronous function. It imports
   no Twisted and assumes no reactor, because a management command, a migration and a test have none.
   Dispatching off the reactor is the consumer's decision for the same reason scheduling is — and on
-  Evennia that means `threads.deferToThread(archive, obj)` at the callsite. **`find()` in particular
-  should be deferred; see below for why.**
+  Evennia that means `threads.deferToThread(archive, obj)` at the callsite. **The two finds in
+  particular should be deferred; see below for why.**
 - **What to archive.** Which typeclasses carry the mixin, and which objects get passed to `archive()`.
 - **Failure handling.** What to log, what to retry, what to alarm on.
 - **Reconciliation.** Detecting archived objects with no live counterpart, or the reverse.

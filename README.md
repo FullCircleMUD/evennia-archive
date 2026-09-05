@@ -5,8 +5,9 @@ without losing your players.
 
 ## Status
 
-**Working, not yet used by a real game.** All four calls are built and tested —
-objects and accounts can be archived, found, restored and deleted, with identity surviving and dbrefs
+**Working, not yet used by a real game.** All five calls are built and tested —
+objects and accounts can be archived, found by attribute or by column, restored and deleted, with
+identity surviving and dbrefs
 deliberately not. References between objects are dropped rather than rebuilt, and nothing has been
 tested on PostgreSQL. See [docs/progress.md](https://github.com/FullCircleMUD/evennia-archive/blob/main/docs/progress.md) for what exists and what proves it.
 

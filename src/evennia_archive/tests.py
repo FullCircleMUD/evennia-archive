@@ -8,6 +8,7 @@ from unittest import TestCase as PlainTestCase
 from unittest import mock
 
 from django.conf import settings
+from django.core.exceptions import FieldDoesNotExist
 from django.test import override_settings
 from evennia.accounts.accounts import DefaultAccount
 from evennia.locks import lockhandler
@@ -27,7 +28,8 @@ from evennia_archive.api import (
     _purge_attributes,
     archive,
     delete,
-    find,
+    find_by_attribute,
+    find_by_column,
     restore,
 )
 from evennia_archive import log as log_module
@@ -350,8 +352,9 @@ class TestArchivableAccountMixin(BaseEvenniaTest):
 
     def test_the_stamp_is_stored_unpickled(self):
         """AM-04"""
-        # find() matches db_strvalue. Pickled, the same value would be a
-        # byte comparison whose stability depends on the pickle protocol.
+        # find_by_attribute() matches db_strvalue. Pickled, the same
+        # value would be a byte comparison whose stability depends on the
+        # pickle protocol.
         _, character = self._created_character()
         attr = character.attributes.get(
             OWNER_ACCOUNT_KEY, return_obj=True, strattr=True
@@ -927,7 +930,7 @@ class TestAccountRoundTrip(BaseEvenniaTest):
 
 
 class TestFind(BaseEvenniaTest):
-    """find() locates archive identifiers by attribute."""
+    """find_by_attribute() locates archive identifiers by attribute."""
 
     databases = {"default", "archive"}
 
@@ -940,39 +943,39 @@ class TestFind(BaseEvenniaTest):
 
     def test_finds_nothing_in_an_empty_archive(self):
         """FN-01"""
-        self.assertEqual(find("wallet", "rXYZ"), [])
+        self.assertEqual(find_by_attribute("wallet", "rXYZ"), [])
 
     def test_finds_by_unpickled_attribute(self):
         """FN-02"""
         archive_id = self._archived_object()
         # archive_id itself is stored with strattr, so this exercises the
         # db_strvalue half of the query.
-        self.assertEqual(find(ARCHIVE_ID_KEY, archive_id), [archive_id])
+        self.assertEqual(find_by_attribute(ARCHIVE_ID_KEY, archive_id), [archive_id])
 
     def test_finds_by_pickled_attribute(self):
         """FN-03"""
         archive_id = self._archived_object(level=12)
-        self.assertEqual(find("level", 12), [archive_id])
+        self.assertEqual(find_by_attribute("level", 12), [archive_id])
 
     def test_pickled_match_is_type_sensitive(self):
         """FN-04"""
         # Documented behaviour rather than a defect: the same logical
         # value of a different type pickles to different bytes.
         self._archived_object(level=12)
-        self.assertEqual(find("level", "12"), [])
+        self.assertEqual(find_by_attribute("level", "12"), [])
 
     def test_returns_every_match(self):
         """FN-05"""
         first = self._archived_object(key="a", cohort="founder")
         second = self._archived_object(key="b", cohort="founder")
-        self.assertCountEqual(find("cohort", "founder"), [first, second])
+        self.assertCountEqual(find_by_attribute("cohort", "founder"), [first, second])
 
     def test_key_and_value_must_be_the_same_attribute(self):
         """FN-06"""
         # Chaining two filters would let an object match when one
         # attribute has the key and a different one has the value.
         self._archived_object(level=12, other="founder")
-        self.assertEqual(find("level", "founder"), [])
+        self.assertEqual(find_by_attribute("level", "founder"), [])
 
     def test_searches_accounts_and_objects_together(self):
         """FN-07"""
@@ -982,7 +985,9 @@ class TestFind(BaseEvenniaTest):
         )
         account.attributes.add("cohort", "founder")
         archive(account)
-        self.assertCountEqual(find("cohort", "founder"), [obj_id, account.archive_id])
+        self.assertCountEqual(
+            find_by_attribute("cohort", "founder"), [obj_id, account.archive_id]
+        )
 
     def test_model_narrows_the_search(self):
         """FN-08"""
@@ -993,7 +998,104 @@ class TestFind(BaseEvenniaTest):
         account.attributes.add("cohort", "founder")
         archive(account)
         self.assertEqual(
-            find("cohort", "founder", model="accountdb"), [account.archive_id]
+            find_by_attribute("cohort", "founder", model="accountdb"),
+            [account.archive_id],
+        )
+
+
+class TestFindByColumn(BaseEvenniaTest):
+    """find_by_column() locates archive identifiers by a real column."""
+
+    databases = {"default", "archive"}
+
+    def _archived_account(self, username="rowan"):
+        account = create_account(
+            username,
+            f"{username}@example.com",
+            "sekritpw",
+            typeclass=ArchivableTestAccount,
+        )
+        archive(account)
+        return account
+
+    def _archived_object(self, key="subject"):
+        obj = create_object(ArchivableTestObject, key=key)
+        archive(obj)
+        return obj.archive_id
+
+    def test_unknown_model_raises(self):
+        """FC-01"""
+        with self.assertRaises(LookupError):
+            find_by_column("nosuchmodel", "db_key", "subject")
+
+    def test_a_model_class_behaves_like_its_name(self):
+        """FC-02"""
+        account = self._archived_account()
+        self.assertEqual(
+            find_by_column(AccountDB, "username", "rowan"), [account.archive_id]
+        )
+        self.assertEqual(
+            find_by_column(AccountDB, "username", "rowan"),
+            find_by_column("accountdb", "username", "rowan"),
+        )
+
+    def test_a_column_the_model_lacks_raises(self):
+        """FC-03"""
+        # username is an accountdb column and nothing else's. Searching
+        # objectdb for it is the mistake that made model required.
+        with self.assertRaises(FieldDoesNotExist):
+            find_by_column("objectdb", "username", "rowan")
+
+    def test_a_relation_is_not_a_column(self):
+        """FC-04"""
+        # _meta.get_field() answers for db_attributes, so a check that
+        # leaned on it alone would accept this and filter on a relation.
+        with self.assertRaises(FieldDoesNotExist):
+            find_by_column("objectdb", "db_attributes", "subject")
+
+    def test_finds_nothing_in_an_empty_archive(self):
+        """FC-05"""
+        self.assertEqual(find_by_column("accountdb", "username", "rowan"), [])
+
+    def test_finds_an_account_by_username_and_restores_it(self):
+        """FC-06"""
+        account = self._archived_account()
+        archive_id = account.archive_id
+        account.delete()
+
+        found = find_by_column("accountdb", "username", "rowan")
+
+        self.assertEqual(found, [archive_id])
+        self.assertEqual(restore(found[0]).username, "rowan")
+
+    def test_returns_every_match(self):
+        """FC-07"""
+        # db_key is not unique, so a column search can hit several rows.
+        first = self._archived_object(key="Fred")
+        second = self._archived_object(key="Fred")
+        self.assertCountEqual(
+            find_by_column("objectdb", "db_key", "Fred"), [first, second]
+        )
+
+    def test_searches_the_archive_not_the_live_database(self):
+        """FC-08"""
+        # Never archived. username is a column on the live table too, so
+        # an alias leak here finds this account and looks like success.
+        create_account(
+            "mirren", "mirren@example.com", "sekritpw", typeclass=ArchivableTestAccount
+        )
+        self.assertEqual(find_by_column("accountdb", "username", "mirren"), [])
+
+    def test_a_column_match_is_not_type_sensitive(self):
+        """FC-09"""
+        # The opposite of FN-04: Django coerces the term to the field's
+        # type, so a string matches a boolean column.
+        account = self._archived_account()
+        self.assertEqual(
+            find_by_column("accountdb", "is_active", "True"), [account.archive_id]
+        )
+        self.assertEqual(
+            find_by_column("accountdb", "is_active", True), [account.archive_id]
         )
 
 

@@ -21,7 +21,8 @@ All test functions live in `src/evennia_archive/tests.py`.
 | `AR` | `archive()` |
 | `RS` | `restore()` |
 | `AC` | The same round trip on `AccountDB` rather than `ObjectDB` |
-| `FN` | `find()` |
+| `FN` | `find_by_attribute()` |
+| `FC` | `find_by_column()` |
 | `DL` | `delete()` |
 | `UC` | Restore into a taken unique value |
 | `PG` | `_purge_attributes()` — clearing one row's attributes in one database |
@@ -119,7 +120,7 @@ character is created.
 | `AM-01` | Creating an account carrying the mixin mints an `archive_id`, via `at_account_creation` | `test_account_creation_mints_an_id` |
 | `AM-02` | An account carrying the mixin is archivable | `test_an_account_mixin_account_is_archivable` |
 | `AM-03` | `at_post_create_character` stamps the character with the account's `archive_id` | `test_stamps_the_character_with_its_owner` |
-| `AM-04` | The stamp is stored unpickled, so `find()` matches it by string equality rather than by pickled bytes | `test_the_stamp_is_stored_unpickled` |
+| `AM-04` | The stamp is stored unpickled, so `find_by_attribute()` matches it by string equality rather than by pickled bytes | `test_the_stamp_is_stored_unpickled` |
 | `AM-05` | The stamp is never overwritten — an account creating a character that already carries one leaves it alone | `test_the_stamp_is_never_overwritten` |
 | `AM-06` | A character typeclass that does not carry `ArchivableCharacterMixin` is left unstamped, and creating one does not raise. Not every Character in a game is a player's — and an object-mixin character is archivable but has nowhere to read the stamp back from | `test_a_character_without_the_mixin_is_left_alone` |
 | `AM-07` | Evennia's own `at_post_create_character` still runs: the character joins `_playable_characters`, and `_last_puppet` is set for the first one | `test_evennias_own_hook_still_runs` |
@@ -139,6 +140,14 @@ refused the character it owns, with nothing in any log.
 `owns_character()` is the replacement — see the `LF` cases. It reads the owner off the character's
 stamp rather than carrying a value in the lockstring, so the lock and the stamp cannot come to name
 different accounts.
+
+`[TBD — needs discussion: what an account with no `archive_id` should do when it creates a
+character. `at_post_create_character` calls `at_archive_init()`, which mints one. That is right for
+the case the mixin was written for — a game installing this library on an existing world, where no
+account has an identity yet. It is wrong for an account that was archived and then had its identity
+removed, which is an error condition: minting a second identity orphans the archived copy and every
+character already stamped with the old value, silently. Nothing distinguishes the two, and there is
+no case either way.]`
 
 `AM-08` and `AM-09` prove the named clause is replaced outright rather than merged — the stale
 `id(3) or pid(2)` would still be there otherwise. `AM-12` proves the other direction: replacing three
@@ -239,7 +248,7 @@ The same round trip on `AccountDB` rather than `ObjectDB`.
 | `AC-04` | The account copy does not land in the live database | `TestAccountRoundTrip.test_copy_does_not_land_in_the_live_database` |
 | `AC-05` | The restored account has a different primary key | `test_restored_account_has_a_new_primary_key` |
 
-## `find()`
+## `find_by_attribute()`
 
 | ID | Case | Test function |
 |---|---|---|
@@ -251,6 +260,28 @@ The same round trip on `AccountDB` rather than `ObjectDB`.
 | `FN-06` | The key and the value must be the same attribute — chaining two filters would match an object holding the key on one attribute and the value on another | `test_key_and_value_must_be_the_same_attribute` |
 | `FN-07` | An unnarrowed search covers accounts and objects together | `test_searches_accounts_and_objects_together` |
 | `FN-08` | `model` narrows the search to one archived model | `test_model_narrows_the_search` |
+
+## `find_by_column()`
+
+Searches a real column on the archived model rather than a row in the Attribute table, so a consumer
+can look an account up by `username` without duplicating it into an attribute. Returns the same thing
+`find_by_attribute()` does — the archive identifiers of the matching rows, ready for `restore()`.
+
+`model` is required here rather than optional, because columns are not shared the way attribute keys
+are: `username` exists on `accountdb` and nowhere else, so an unnarrowed search would have to either
+raise on the models that lack the column or swallow the miss silently.
+
+| ID | Case | Test function |
+|---|---|---|
+| `FC-01` | A name that names no model raises rather than returning an empty list. Distinct from a real model the archive happens to hold nothing of, which is `FC-05` | `test_unknown_model_raises` |
+| `FC-02` | A model given as the class behaves the same as the string, matching `find_by_attribute()` | `test_a_model_class_behaves_like_its_name` |
+| `FC-03` | A column the model does not have raises — `username` against `objectdb`. This is the case that made `model` required rather than optional | `test_a_column_the_model_lacks_raises` |
+| `FC-04` | A relation is not a column: `db_attributes` is refused rather than filtered on. `_meta.get_field()` answers for it, so the check has to be against concrete fields | `test_a_relation_is_not_a_column` |
+| `FC-05` | An empty archive yields an empty list rather than raising | `TestFindByColumn.test_finds_nothing_in_an_empty_archive` |
+| `FC-06` | An account is found by `username`, and the identifier returned restores it. The motivating case, end to end | `test_finds_an_account_by_username_and_restores_it` |
+| `FC-07` | Every match is returned — `db_key` is not unique, so one value can hit several rows | `TestFindByColumn.test_returns_every_match` |
+| `FC-08` | The search runs against the archive alias. `username` is a column on the live table too, so an alias leak finds the live account and looks like success. Same class of defect as `PG-05` | `test_searches_the_archive_not_the_live_database` |
+| `FC-09` | A column comparison is not type-sensitive, because Django coerces the term to the field's type. The opposite of `FN-04`, and worth pinning so the pickled behaviour is not assumed to carry over | `test_a_column_match_is_not_type_sensitive` |
 
 ## `delete()`
 
@@ -309,7 +340,7 @@ end pointed at — and in that the archive-bound one read its source as model in
 |---|---|---|
 | `CP-01` | Every attribute comes across — same keys, same count | `test_every_attribute_comes_across` |
 | `CP-02` | A pickled value survives intact (`db_value`) | `test_a_pickled_value_survives` |
-| `CP-03` | An unpickled value survives in `db_strvalue`. This is the half `find()` and `_live_pk_for` match on, so losing it breaks identity lookup rather than merely losing data | `test_an_unpickled_value_survives` |
+| `CP-03` | An unpickled value survives in `db_strvalue`. This is the half `find_by_attribute()` and `_live_pk_for` match on, so losing it breaks identity lookup rather than merely losing data | `test_an_unpickled_value_survives` |
 | `CP-04` | Category, lock string, `db_model` and `db_attrtype` all come across — the whole row, not just key and value. A wrong field list would silently strip categories | `test_the_whole_row_comes_across` |
 | `CP-05` | The destination mints its own ids: copying into a database already holding an attribute at one of the source's ids leaves that row alone and lands the copy beside it. If the id travelled with the data, this is where it collides | `test_the_destination_mints_its_own_ids` |
 | `CP-06` | The destination is replaced, not merged — an attribute on the destination row and absent from the source is gone afterwards | `test_the_destination_is_replaced_not_merged` |

@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """The library's public operations.
 
-Four calls:
+Five calls:
 
-    archive(obj)              copy an object into the archive
-    find(key, value)          archive ids of objects matching an attribute
-    restore(archive_id)       rebuild one in the live database
-    delete(archive_id)        remove an archived copy
+    archive(obj)                       copy an object into the archive
+    find_by_attribute(key, value)      archive ids of objects matching an attribute
+    find_by_column(model, col, value)  archive ids of rows matching a column
+    restore(archive_id)                rebuild one in the live database
+    delete(archive_id)                 remove an archived copy
 
 Everything about *when* to call them belongs to the consumer. The library
 ships no scheduler, no hooks and no triggers.
@@ -21,6 +22,7 @@ live game database while appearing to maintain the archive. The reasoning
 lives in the design doc rather than here so there is one copy of it.
 """
 
+from django.core.exceptions import FieldDoesNotExist
 from django.db import DEFAULT_DB_ALIAS, transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -524,7 +526,7 @@ def _model_names_in_archive(model=None):
     )
 
 
-def find(key, value, model=None):
+def find_by_attribute(key, value, model=None):
     """Archive identifiers of objects whose ``key`` attribute holds ``value``.
 
     Returns a list, because the library cannot know whether a consumer's
@@ -537,11 +539,12 @@ def find(key, value, model=None):
 
     **Wrap this in deferToThread.** It is the one call here that can block
     long enough to be felt by every connected player; the reasons are in
-    docs/design.md § find() is the expensive call — defer it.
+    docs/design.md § the finds are the expensive calls — defer them.
 
     A pickled comparison is type-sensitive, and matching the stored type
-    is the caller's job: ``find("level", 12)`` matches an attribute stored
-    as the integer 12, while ``find("level", "12")`` matches nothing, and
+    is the caller's job: ``find_by_attribute("level", 12)`` matches an
+    attribute stored as the integer 12, while
+    ``find_by_attribute("level", "12")`` matches nothing, and
     does so silently. The library cannot know what type an attribute holds
     and will not guess, because a wrong guess is a false match rather than
     an error.
@@ -578,6 +581,74 @@ def find(key, value, model=None):
             .values_list("archive_id", flat=True)
         )
 
+    return [str(archive_id) for archive_id in found]
+
+
+def _concrete_field(db_model, column):
+    """Refuse anything that is not a real column on ``db_model``.
+
+    `_meta.get_field()` answers for `db_attributes` and `db_tags` as well
+    as for columns, so its result has to be checked: a relation is not
+    something a caller can hold a value in, and filtering on one would
+    match on a joined row instead of failing.
+    """
+    field = db_model._meta.get_field(column)
+    if not field.concrete:
+        raise FieldDoesNotExist(
+            f"{db_model.__name__} has no column named {column!r} — it names "
+            f"a {type(field).__name__}, which is a relation rather than a "
+            "column. Search a related row's own model instead."
+        )
+    return field
+
+
+def find_by_column(model, column, value):
+    """Archive identifiers of ``model`` rows whose ``column`` holds ``value``.
+
+    The counterpart to ``find_by_attribute()``, and returns the same thing
+    — a list of archive identifiers, ready for ``restore()``. The
+    difference is where it looks: a real column on the archived model
+    rather than a row in the Attribute table. An account can therefore be
+    found by ``username`` without the consumer duplicating it into an
+    attribute to make it findable.
+
+    ``model`` is required here rather than optional, because columns are
+    not shared the way attribute keys are — ``username`` exists on
+    ``accountdb`` and nowhere else, so an unnarrowed search would have to
+    either raise on every model lacking the column or swallow the miss.
+    Naming the model makes both the intent and the mistake explicit: an
+    unknown model raises ``LookupError`` and a column that model does not
+    have raises ``FieldDoesNotExist``, rather than either returning an
+    empty list a caller would read as "no match".
+
+    Takes the model as a name ("accountdb") or as the class.
+
+    **Wrap this in deferToThread**, for the same reasons as
+    ``find_by_attribute()`` — see docs/design.md § the finds are the
+    expensive calls — defer them. A column search avoids the pickle, but
+    the columns are not indexed either and the archive may not be local.
+
+    Unlike the pickled half of ``find_by_attribute()``, the comparison is
+    not type-sensitive: Django coerces the term to the field's type, so a
+    string matches a boolean column.
+    """
+    db_model = _model_named(model if isinstance(model, str) else model.__name__.lower())
+    model_name = db_model.__name__.lower()
+    _concrete_field(db_model, column)
+
+    # values_list, never instances — see docs/design.md § The archive
+    # holds rows, not objects.
+    matches = (
+        db_model.objects.using(ARCHIVE_ALIAS)
+        .filter(**{column: value})
+        .values_list("pk", flat=True)
+    )
+
+    found = (
+        ArchiveRecord.objects.using(ARCHIVE_ALIAS)
+        .filter(archived_model=model_name, archived_pk__in=list(matches))
+        .values_list("archive_id", flat=True)
+    )
     return [str(archive_id) for archive_id in found]
 
 

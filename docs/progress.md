@@ -3,6 +3,31 @@
 Reverse-chronological milestone log. Newest first. Each entry states what became true and what proves
 it.
 
+## 2026-09-05 — Two ways to search the archive
+
+**`find()` is now `find_by_attribute()`, and `find_by_column()` joins it.** Not everything worth
+searching on is an attribute: an account's `username` is a column on `AccountDB`, and looking one up
+meant duplicating it into an attribute purely to make it findable. Both calls return the same thing —
+archive identifiers, ready for `restore()` — so a consumer picks whichever matches where their value
+actually lives. The rename landed first and on its own, with the eight `FN` cases proving the
+behaviour was untouched by it.
+
+**`model` is required on the column search**, where it is optional on the attribute one. Attribute
+keys are uniform across models, and a model that has never held one simply does not match. Columns
+are not: `username` exists on `accountdb` and nowhere else, so an unnarrowed column search would have
+to either raise on every model lacking the column or swallow the miss silently. Naming the model makes
+the mistake explicit instead — an unknown model raises `LookupError`, a column the model does not have
+raises `FieldDoesNotExist`. Cases `FC-01` to `FC-09`.
+
+The column is checked for being concrete, not merely for existing: `_meta.get_field()` answers for
+`db_attributes` and `db_tags` as well as for columns, and a relation is not something a caller can
+hold a value in.
+
+`FC-08` is the case worth having. `username` is a column on the live table too, so a search that
+leaked to the default alias would find the live account and look like a success.
+
+117 tests.
+
 ## 2026-09-03 — Three kinds of mixin, and a lock that survives a restore
 
 **Attributes are copied as values, so the idmapper cannot answer for them.** Evennia's `Attribute` is
