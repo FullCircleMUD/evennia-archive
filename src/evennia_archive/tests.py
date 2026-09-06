@@ -407,6 +407,42 @@ class TestArchivableAccountMixin(BaseEvenniaTest):
         account = self._account()
         self.assertTrue(self._in_archive(account.archive_id))
 
+    def test_account_one_is_not_archived_at_creation(self):
+        """AM-22
+
+        Evennia requires `#1` on every instance and makes one at first
+        boot. It belongs where it was made — restoring it anywhere would
+        displace that instance's own — so an archived copy could never be
+        used for anything.
+
+        The hook is called directly, with the key faked: `#1` is made by
+        Evennia's initial setup and a test cannot arrange one.
+        """
+        account = self._account()
+
+        with mock.patch.object(type(account), "pk", 1), mock.patch(
+            "evennia_archive.api.archive"
+        ) as archiving:
+            account.at_account_creation()
+
+        archiving.assert_not_called()
+
+    def test_another_superuser_is_archived(self):
+        """AM-23
+
+        Being a superuser is not the reason `#1` is skipped. A second
+        superuser is not what Evennia demands be present and its name
+        collides with nothing, so it is archived like any other account.
+        """
+        account = self._account()
+        account.is_superuser = True
+        account.save()
+
+        with mock.patch("evennia_archive.api.archive") as archiving:
+            account.at_account_creation()
+
+        archiving.assert_called_once_with(account)
+
     def _departed(self, key="rowan"):
         """An account archived and then gone from the live database."""
         account = self._account(key)

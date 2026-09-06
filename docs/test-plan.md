@@ -138,6 +138,8 @@ character is created.
 | `AM-19` | A username free in both the live database and the archive is accepted | `test_a_free_username_is_accepted` |
 | `AM-20` | Evennia's own refusal stands, with its own errors — the archive is not consulted instead of the local check, but after it | `test_evennias_own_refusal_stands` |
 | `AM-21` | A different case of an archived username is refused too. Evennia authenticates case-insensitively, so `Rowan` and `rowan` are one account to it | `test_an_archived_username_is_refused_whatever_the_case` |
+| `AM-22` | Account `#1` is not archived at creation | `test_account_one_is_not_archived_at_creation` |
+| `AM-23` | Another superuser is archived like any other account — being a superuser is not the reason `#1` is skipped | `test_another_superuser_is_archived` |
 
 `AM-08` to `AM-12` are why this mixin exists rather than a plain identity stamp. Evennia writes a
 character's `puppet`, `edit` and `delete` locks at creation with the account's and the character's
@@ -156,6 +158,20 @@ account has an identity yet. It is wrong for an account that was archived and th
 removed, which is an error condition: minting a second identity orphans the archived copy and every
 character already stamped with the old value, silently. Nothing distinguishes the two, and there is
 no case either way.]`
+
+**`AM-22` keeps `#1` out of it, and `AM-23` says why that is the rule rather than "no superusers".**
+Evennia requires account `#1` on every instance and creates one called `root` at first boot. It belongs
+to the instance it was made on: restoring it anywhere would displace that instance's own, so there is
+nothing an archived copy could be used for.
+
+Without the skip it is worse than useless. A second instance sharing an archive collides on `username`
+— and an initial-setup failure stops the Server *and* the Portal, taking every other instance behind
+that Portal down with it. Found by booting a second instance in `evennia-scaling`'s demo.
+
+**Being a superuser is not the reason.** A second superuser account is an ordinary account as far as
+this library is concerned: it is not what Evennia demands be present, its name collides with nothing,
+and a consumer may well want one that can be archived and restored like any other. `#1` is the
+constraint; superuser-ness was standing in for it.
 
 **`AM-18` keeps a departed player's name.** The archive is a clone of Evennia's schema, so it carries
 Evennia's `UNIQUE` on `username`. An account archived and then deleted leaves that name held in the

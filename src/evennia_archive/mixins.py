@@ -197,6 +197,20 @@ class ArchivableAccountMixin(ArchivableBaseMixin):
         super(ArchivableBaseMixin, self).at_account_creation()
         self.at_archive_init()
 
+        # Account #1 belongs to the instance it was made on. Evennia
+        # requires one on every instance and makes it at first boot, so
+        # restoring a copy anywhere would displace that instance's own —
+        # there is nothing an archived copy could be used for. Worse, they
+        # are all called `root`, so a second instance sharing an archive
+        # collides on `username`, and an initial-setup failure stops the
+        # Server *and* the Portal.
+        #
+        # Keyed on the primary key rather than on `is_superuser`: a second
+        # superuser is not what Evennia demands be present and collides
+        # with nothing, so it is archived like any other account.
+        if self.pk == 1:
+            return
+
         # Stored as well as minted. An identity with no row behind it names
         # an archive entry that does not exist, and `restore()` on it
         # raises — so an account carrying this mixin has a copy from its

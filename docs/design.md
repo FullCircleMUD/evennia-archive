@@ -618,6 +618,15 @@ Adding the mixin is the opt-in — the hooks check for it before doing anything,
 asked for archivable accounts or characters gets no rows. And it takes nothing away: `archive()` is
 unchanged, and a consumer who archives at the end of chargen overwrites this copy with a better one.
 
+**Account `#1` is the exception to the exception.** Evennia requires one on every instance and makes it
+at first boot, so restoring a copy anywhere would displace that instance's own — an archived copy could
+never be used for anything. They are also all called `root`, so a second instance sharing an archive
+collides on `username`, and an initial-setup failure stops the Server *and* the Portal.
+
+The check is on the primary key, not on `is_superuser`. A second superuser account is not what Evennia
+demands be present and its name collides with nothing, so it is archived like any other account — which
+is what lets a consumer have a privileged account that can move between instances.
+
 Objects are not archived at creation `[TBD — needs discussion: `ArchivableObjectMixin` mints through
 `at_object_creation`, which a game may reach thousands of times an hour through a spawner. Characters
 inherit that hook too, so any rule here needs a guard for them]`.

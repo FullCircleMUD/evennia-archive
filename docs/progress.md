@@ -5,7 +5,17 @@ it.
 
 ## 2026-09-06 — An identity always has a row behind it
 
-132 tests.
+134 tests.
+
+**Account `#1` is not archived at creation.** Found by booting a second instance in
+`evennia-scaling`'s demo: Evennia's initial setup makes a superuser called `root` on every first boot,
+so the second one collided on `username` in the shared archive — and an initial-setup failure stops the
+Server *and* the Portal, which took down every instance behind it.
+
+Keyed on the primary key rather than on `is_superuser`. `#1` is what Evennia demands be present and
+what cannot be restored anywhere without displacing the local one; a second superuser is neither, so it
+is archived like any other account. That is what lets a consumer have a privileged account that moves
+between instances. Cases `AM-22` and `AM-23`.
 
 **Accounts and characters are archived when they are created.** Accounts at `at_account_creation`,
 characters at the end of `at_post_create_character` — after the owner stamp and the lock rewrite, so
