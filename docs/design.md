@@ -586,10 +586,10 @@ The consumer loses nothing by this. They can set `obj.location` directly and fir
 
 ## What the consumer owns
 
-The library ships no scheduler, no hooks and no triggers. All of the following are consumer code:
+The library ships no scheduler. All of the following are consumer code:
 
 - **When to archive.** A logout hook, a periodic script, an admin command, a save point — the library
-  is indifferent.
+  is indifferent, with one exception below.
 - **Which thread it runs on.** Every call in this library is a plain synchronous function. It imports
   no Twisted and assumes no reactor, because a management command, a migration and a test have none.
   Dispatching off the reactor is the consumer's decision for the same reason scheduling is — and on
@@ -602,6 +602,30 @@ The library ships no scheduler, no hooks and no triggers. All of the following a
 
 This is the mechanism/policy split, and it is why the library can be useful to a game with none of
 FCM's concepts in it.
+
+### The one exception: creation
+
+**An account is archived when it is created, and so is a character.** Accounts at
+`at_account_creation`, characters at the end of `at_post_create_character` — after the owner stamp and
+the lock rewrite, so the stored copy carries both.
+
+The reason is that those hooks already mint an `archive_id`, and an identity with no row behind it is a
+half-state: it names an archive entry that does not exist, and `restore()` on it raises. Storing at
+creation makes **a stamped object always has a row** true from the first moment, which is what a
+consumer reading that stamp is entitled to assume.
+
+Adding the mixin is the opt-in — the hooks check for it before doing anything, so a game that has not
+asked for archivable accounts or characters gets no rows. And it takes nothing away: `archive()` is
+unchanged, and a consumer who archives at the end of chargen overwrites this copy with a better one.
+
+Objects are not archived at creation `[TBD — needs discussion: `ArchivableObjectMixin` mints through
+`at_object_creation`, which a game may reach thousands of times an hour through a spawner. Characters
+inherit that hook too, so any rule here needs a guard for them]`.
+
+**A departed player keeps their name.** The archive carries Evennia's `UNIQUE` on `username`, so an
+account archived and then deleted holds that name while it is free in the live database.
+`validate_username` refuses it — Evennia's own check first, then the archive — rather than letting the
+next person register and fail at the point of archiving.
 
 ## Optional capabilities
 

@@ -197,6 +197,52 @@ class ArchivableAccountMixin(ArchivableBaseMixin):
         super(ArchivableBaseMixin, self).at_account_creation()
         self.at_archive_init()
 
+        # Stored as well as minted. An identity with no row behind it names
+        # an archive entry that does not exist, and `restore()` on it
+        # raises — so an account carrying this mixin has a copy from its
+        # first moment. Imported here: `api` imports the models, which are
+        # not loadable while this module is first imported.
+        from .api import archive
+
+        archive(self)
+
+    @classmethod
+    def validate_username(cls, username):
+        """Evennia's check, then the archive's.
+
+        The archive is a clone of Evennia's schema, so it carries
+        Evennia's ``UNIQUE`` on ``username``. An account archived and then
+        deleted leaves its name held there while it is free in the live
+        database — so the next person to take it cannot be archived, and
+        the failure lands on their registration rather than anywhere
+        useful.
+
+        Refused here instead. A player who leaves keeps their name for as
+        long as the archive holds them, and the person being turned away
+        has not lost anything yet.
+
+        **After Evennia's check, not instead of it.** A name that fails
+        the local check is refused with Evennia's own errors, and the
+        archive is not consulted.
+
+        Matched without regard to case, because Evennia authenticates that
+        way — ``Rowan`` and ``rowan`` are one account to it, so a check
+        that missed the difference would let the collision back in.
+        """
+        valid, errors = super().validate_username(username)
+        if not valid:
+            return valid, errors
+
+        from .api import find_by_column
+
+        if find_by_column("accountdb", "username", username):
+            return False, [
+                f"The name '{username}' belongs to an account that is not "
+                "currently in the game. Please choose another."
+            ]
+
+        return True, errors
+
     def get_owner_lockstring(self, character):
         """The ownership locks written onto a character this account creates.
 
@@ -257,3 +303,11 @@ class ArchivableAccountMixin(ArchivableBaseMixin):
         # from a dict keyed on access type, so these three replace Evennia's
         # outright and the eleven others are left as they were.
         character.locks.add(self.get_owner_lockstring(character))
+
+        # Last, so the stored copy carries the stamp and the rewritten
+        # locks rather than what Evennia left behind. A character with an
+        # identity and no row behind it names an archive entry that does
+        # not exist, and `restore()` on it raises.
+        from .api import archive
+
+        archive(character)

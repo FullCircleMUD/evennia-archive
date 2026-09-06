@@ -3,6 +3,44 @@
 Reverse-chronological milestone log. Newest first. Each entry states what became true and what proves
 it.
 
+## 2026-09-06 — An identity always has a row behind it
+
+132 tests.
+
+**Accounts and characters are archived when they are created.** Accounts at `at_account_creation`,
+characters at the end of `at_post_create_character` — after the owner stamp and the lock rewrite, so
+the stored copy carries both. Those hooks already minted an `archive_id`, and an identity with no row
+behind it is a half-state: it names an archive entry that does not exist, and `restore()` on it raises.
+Cases `AM-14` to `AM-17`.
+
+This is the library's one departure from "the consumer decides when to archive", and `design.md` and
+`CLAUDE.md` now say so rather than contradicting it. Adding the mixin is the opt-in: the hooks check
+for it before doing anything. Objects are deliberately left out — `at_object_creation` is a hook a
+spawner may reach thousands of times an hour, and characters inherit it.
+
+**A departed player keeps their name.** The archive carries Evennia's `UNIQUE` on `username`, so an
+account archived and then deleted holds that name while it is free in the live database — and the next
+person to take it could not be archived, which with creation-time archiving means their registration
+fails outright. `validate_username` refuses the name instead: Evennia's own check first, then the
+archive. Refusing rather than renaming, because the player who left has not given the name up and the
+person being turned away has not lost anything yet. Cases `AM-18` to `AM-21`.
+
+**Both finds ignore case by default.** `case_insensitive=True`, and `False` to require an exact match.
+On `find_by_column` it applies to text columns only — there is no case in a boolean or an integer to be
+insensitive about, and asking for one must not break a search that works. On `find_by_attribute` it
+reaches `db_strvalue` alone: a pickled value is compared as bytes. Cases `FN-09` to `FN-11` and `FC-10`
+to `FC-12`.
+
+**`archive()` returns a string identity whichever branch it took.** A record loaded from the database
+read its `UUIDField` back as a `uuid.UUID` while a newly created one still held the string it was
+given, so the return type depended on whether a copy already existed. The column stays a `UUIDField` —
+on Postgres that is 16 bytes against 36, on a key everything joins through — and the string is put back
+on the record at the boundary, where the rest of the library already speaks strings. Case `AR-12`.
+
+Two cases were rebuilt rather than repaired, because creation-time archiving made their setup
+impossible to construct: `FC-08` now proves the alias by letting the two copies diverge, and the
+restore-collision cases take their name with a plain account typeclass that nothing archives.
+
 ## 2026-09-05 — Two ways to search the archive
 
 **`find()` is now `find_by_attribute()`, and `find_by_column()` joins it.** Not everything worth

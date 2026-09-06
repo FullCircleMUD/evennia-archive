@@ -130,6 +130,14 @@ character is created.
 | `AM-11` | The permission clauses survive — a Developer can still puppet and an Admin can still edit and delete. Replacing the whole lockstring rather than the three access types would take an operator's way in with it | `test_the_permission_clauses_survive` |
 | `AM-12` | Access types the rewrite does not name come through unchanged. `control`, `view`, `tell` and the rest keep what Evennia wrote — the hook replaces three clauses, not the lockstring | `test_unnamed_access_types_survive` |
 | `AM-13` | Two characters created by the same account carry the same stamp. It is the account's identity rather than anything derived from the character, which is what lets a consumer find a whole roster by one value | `test_two_characters_share_the_owner_stamp` |
+| `AM-14` | Creating a character archives it, so a stamped character always has a row behind it | `test_a_new_character_is_archived` |
+| `AM-15` | The archived copy carries the owner stamp and the rewritten locks — it is stored after both, not before | `test_the_archived_copy_carries_the_stamp_and_locks` |
+| `AM-16` | A character without `ArchivableCharacterMixin` is not archived | `test_a_character_without_the_mixin_is_not_archived` |
+| `AM-17` | Creating an account archives it, so a minted identity always has a row behind it | `test_a_new_account_is_archived` |
+| `AM-18` | A username the archive already holds is refused, with an error saying so | `test_a_username_held_in_the_archive_is_refused` |
+| `AM-19` | A username free in both the live database and the archive is accepted | `test_a_free_username_is_accepted` |
+| `AM-20` | Evennia's own refusal stands, with its own errors — the archive is not consulted instead of the local check, but after it | `test_evennias_own_refusal_stands` |
+| `AM-21` | A different case of an archived username is refused too. Evennia authenticates case-insensitively, so `Rowan` and `rowan` are one account to it | `test_an_archived_username_is_refused_whatever_the_case` |
 
 `AM-08` to `AM-12` are why this mixin exists rather than a plain identity stamp. Evennia writes a
 character's `puppet`, `edit` and `delete` locks at creation with the account's and the character's
@@ -148,6 +156,33 @@ account has an identity yet. It is wrong for an account that was archived and th
 removed, which is an error condition: minting a second identity orphans the archived copy and every
 character already stamped with the old value, silently. Nothing distinguishes the two, and there is
 no case either way.]`
+
+**`AM-18` keeps a departed player's name.** The archive is a clone of Evennia's schema, so it carries
+Evennia's `UNIQUE` on `username`. An account archived and then deleted leaves that name held in the
+archive while it is free in the live database — so the next person to take it cannot be archived, and
+with `AM-17` that failure lands on registration.
+
+Refusing the name is the better answer than renaming on the way in, which is what `restore()` does on
+the way out. A player who leaves keeps their name for as long as the archive holds them, and the person
+being turned away has not lost anything yet.
+
+`validate_username` is the seam: a classmethod whose whole job is already "is this name usable",
+running before the account exists, and one a consumer writing bespoke chargen keeps.
+
+**`AM-14` is the one place this library archives something without being asked.** Everywhere else a
+consumer calls `archive()` when they decide something is worth storing. Here, creating a character
+stores it.
+
+The reason is that the hook already mints an `archive_id` for the character, and an id with no row
+behind it is a half-state: it names an archive entry that does not exist, and `restore()` on it raises.
+Storing at creation makes **a stamped character always has a row** true from the first moment, which is
+the invariant a consumer reading that stamp is entitled to assume.
+
+Adding `ArchivableCharacterMixin` is the opt-in. The hook checks for it before doing anything, so a
+game that has not asked for archivable characters gets no rows.
+
+It takes nothing away: `archive()` is unchanged, and a consumer who archives at the end of chargen
+simply overwrites this copy with a better one.
 
 `AM-08` and `AM-09` prove the named clause is replaced outright rather than merged — the stale
 `id(3) or pid(2)` would still be there otherwise. `AM-12` proves the other direction: replacing three
@@ -212,6 +247,14 @@ out of a string, resolved through the registry, and called with the arguments Ev
 | `AR-09` | An object exposing `archive_id` without carrying one of the archivable mixins is refused — the attribute is not the contract | `test_refuses_a_hand_rolled_archive_id` |
 | `AR-10` | An object carrying an archivable mixin but never initialised raises `NotArchivable`, naming `at_archive_init()` | `test_refuses_a_mixin_object_never_initialised` |
 | `AR-11` | An object carrying `ArchivableCharacterMixin` with no owner account raises `NotArchivable`, naming `ArchivableObjectMixin`. The mixin declares that an account owns the object, and an account stamps every character it creates — so no stamp means no account created it, and the declaration is wrong | `test_refuses_a_character_with_no_owner` |
+| `AR-12` | The returned record's `archive_id` is a string whether the copy was created or updated, so it compares equal to the object's own | `test_the_returned_identity_is_a_string` |
+
+`AR-12` keeps the column and the API apart. `ArchiveRecord.archive_id` is a `UUIDField`, which is the
+right storage type — on Postgres it is 16 bytes against 36 for the text form, on a primary key
+everything joins through. But a record loaded from the database reads that back as a `uuid.UUID`, while
+one just created still holds the string it was given, so the same call returned two types depending on
+whether a copy already existed. Everything else in this library speaks strings: the mixins mint and
+store them, and both finders coerce. So the string is put back on the record before it is returned.
 
 `AR-09` is the case that makes the contract the mixin rather than the attribute, and it exists because
 the looser check is unsafe rather than merely untidy. `restore()` finds a live row **by `archive_id`**
@@ -260,6 +303,9 @@ The same round trip on `AccountDB` rather than `ObjectDB`.
 | `FN-06` | The key and the value must be the same attribute — chaining two filters would match an object holding the key on one attribute and the value on another | `test_key_and_value_must_be_the_same_attribute` |
 | `FN-07` | An unnarrowed search covers accounts and objects together | `test_searches_accounts_and_objects_together` |
 | `FN-08` | `model` narrows the search to one archived model | `test_model_narrows_the_search` |
+| `FN-09` | An unpickled attribute matches whatever its case — the default | `test_an_unpickled_match_ignores_case` |
+| `FN-10` | `case_insensitive=False` matches exactly, and a different case does not match | `test_case_can_be_required` |
+| `FN-11` | A pickled value is matched exactly whatever the flag says — there is no case in a pickled byte string | `test_a_pickled_match_is_unaffected_by_the_flag` |
 
 ## `find_by_column()`
 
@@ -280,8 +326,11 @@ raise on the models that lack the column or swallow the miss silently.
 | `FC-05` | An empty archive yields an empty list rather than raising | `TestFindByColumn.test_finds_nothing_in_an_empty_archive` |
 | `FC-06` | An account is found by `username`, and the identifier returned restores it. The motivating case, end to end | `test_finds_an_account_by_username_and_restores_it` |
 | `FC-07` | Every match is returned — `db_key` is not unique, so one value can hit several rows | `TestFindByColumn.test_returns_every_match` |
-| `FC-08` | The search runs against the archive alias. `username` is a column on the live table too, so an alias leak finds the live account and looks like success. Same class of defect as `PG-05` | `test_searches_the_archive_not_the_live_database` |
+| `FC-08` | The search runs against the archive alias, proved by letting the two copies diverge: the archived username is found and the live one is not. `username` is a column on the live table too, so an alias leak answers from the live row. Same class of defect as `PG-05` | `test_searches_the_archive_not_the_live_database` |
 | `FC-09` | A column comparison is not type-sensitive, because Django coerces the term to the field's type. The opposite of `FN-04`, and worth pinning so the pickled behaviour is not assumed to carry over | `test_a_column_match_is_not_type_sensitive` |
+| `FC-10` | A text column matches whatever the case — the default | `test_a_text_column_ignores_case` |
+| `FC-11` | `case_insensitive=False` matches a text column exactly | `test_case_can_be_required_on_a_column` |
+| `FC-12` | A non-text column is matched exactly whatever the flag says. `iexact` on a boolean or an integer is meaningless, and asking for it must not break a search that works | `test_a_non_text_column_is_unaffected_by_the_flag` |
 
 ## `delete()`
 

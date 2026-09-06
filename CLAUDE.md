@@ -42,9 +42,13 @@ Agreed in the design conversation of 2026-08-23. Every implementation decision m
    Wallet addresses, NFTs, banks, FCM typeclass names — all stay in FCM. Default to "consumer
    concern" when uncertain.
 3. **Mechanism here, policy in the consumer.** The library supplies row copy, reference discovery,
-   the disposition framework and the restore primitives. It ships no scheduler, no hooks and no
-   triggers. The consumer decides what to archive, what each reference's disposition is, when any of
-   it runs, and where a restored object goes.
+   the disposition framework and the restore primitives. It ships no scheduler. The consumer decides
+   what to archive, what each reference's disposition is, when any of it runs, and where a restored
+   object goes.
+
+   **One exception: creation.** An account and a character are archived at the hook that mints their
+   identity, because an identity with no row behind it names an archive entry that does not exist.
+   Adding the mixin is the opt-in. See [docs/design.md](docs/design.md) § The one exception: creation.
 4. **Test the object, never the library.** Optional capabilities are detected by asking the object
    whether it exposes what is needed — never by checking whether a sibling library is installed.
    Detecting a library is a hidden dependency wearing an optional one's clothes.

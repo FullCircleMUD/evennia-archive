@@ -220,6 +220,10 @@ class TestArchivableBaseMixin(BaseEvenniaTest):
     Exercised through a concrete child, since the base refuses to create.
     """
 
+    # Creating an account or a character now writes to the archive, so a
+    # class that creates one has to declare the alias.
+    databases = {"default", "archive"}
+
     def _make(self):
         return create_object(ArchivableTestObject, key="subject")
 
@@ -340,10 +344,122 @@ class TestArchivableAccountMixin(BaseEvenniaTest):
         account.at_post_create_character(character)
         return account, character
 
+    def _in_archive(self, archive_id):
+        return (
+            ArchiveRecord.objects.using("archive")
+            .filter(pk=str(archive_id))
+            .exists()
+        )
+
     def test_an_account_mixin_account_is_archivable(self):
         """AM-02"""
         account = self._account()
         self.assertEqual(archive(account).archive_id, account.archive_id)
+
+    def test_a_new_character_is_archived(self):
+        """AM-14
+
+        The hook mints the character an identity, and an identity with no
+        row behind it names an archive entry that does not exist —
+        `restore()` on it raises.
+        """
+        _, character = self._created_character()
+        self.assertTrue(self._in_archive(character.archive_id))
+
+    def test_the_archived_copy_carries_the_stamp_and_locks(self):
+        """AM-15
+
+        Stored after the stamp and the lock rewrite, not before. Asserted
+        through a round trip rather than by reading the archive's rows,
+        because what matters is what comes back.
+        """
+        account, character = self._created_character()
+        archive_id = character.archive_id
+        character.delete()
+
+        restored = restore(archive_id)
+
+        self.assertEqual(restored.owner_account_archive_id, account.archive_id)
+        self.assertIn("owns_character()", restored.locks.get("puppet"))
+
+    def test_a_character_without_the_mixin_is_not_archived(self):
+        """AM-16
+
+        The hook returns before it stamps one, and it has to return before
+        it stores one too.
+        """
+        account = self._account()
+        character = create_object(PlainTestCharacter, key="Rowan")
+        before = ArchiveRecord.objects.using("archive").count()
+
+        account.at_post_create_character(character)
+
+        self.assertEqual(
+            ArchiveRecord.objects.using("archive").count(), before
+        )
+
+    def test_a_new_account_is_archived(self):
+        """AM-17
+
+        The same rule as a character, at the hook that mints an account's
+        identity.
+        """
+        account = self._account()
+        self.assertTrue(self._in_archive(account.archive_id))
+
+    def _departed(self, key="rowan"):
+        """An account archived and then gone from the live database."""
+        account = self._account(key)
+        account.delete()
+
+    def test_a_username_held_in_the_archive_is_refused(self):
+        """AM-18
+
+        The archive carries Evennia's UNIQUE on username, so a name it
+        holds cannot be taken by anyone else. Refused here rather than
+        left to fail at the point of archiving, where it lands on
+        registration.
+        """
+        self._departed("rowan")
+
+        valid, errors = ArchivableTestAccount.validate_username("rowan")
+
+        self.assertFalse(valid)
+        self.assertTrue(any("rowan" in error for error in errors), errors)
+
+    def test_a_free_username_is_accepted(self):
+        """AM-19"""
+        valid, errors = ArchivableTestAccount.validate_username("mirren")
+
+        self.assertTrue(valid, errors)
+        self.assertEqual(errors, [])
+
+    def test_evennias_own_refusal_stands(self):
+        """AM-20
+
+        The archive is consulted after the local check, not instead of
+        it. A name taken in the live database is still refused with
+        Evennia's own message.
+        """
+        self._account("rowan")
+
+        valid, errors = ArchivableTestAccount.validate_username("rowan")
+
+        self.assertFalse(valid)
+        self.assertTrue(errors)
+
+    def test_an_archived_username_is_refused_whatever_the_case(self):
+        """AM-21
+
+        Evennia authenticates case-insensitively, so `Rowan` and `rowan`
+        are one account to it. A check that missed the difference would
+        let the collision straight back in.
+        """
+        self._departed("rowan")
+
+        valid, _ = ArchivableTestAccount.validate_username("RoWaN")
+
+        self.assertFalse(valid)
 
     def test_stamps_the_character_with_its_owner(self):
         """AM-03"""
@@ -533,6 +649,10 @@ class TestOwnsCharacterLockFunc(BaseEvenniaTest):
     an override_settings that replaces LOCK_FUNC_MODULES outright — so
     anything a project registers is invisible inside it.
     """
+
+    # Creating an account or a character now writes to the archive, so a
+    # class that creates one has to declare the alias.
+    databases = {"default", "archive"}
 
     def setUp(self):
         super().setUp()
@@ -729,6 +849,22 @@ class TestArchive(BaseEvenniaTest):
             "db_key", flat=True
         ).get(pk=second.archived_pk)
         self.assertEqual(key, "Rowan the Grey")
+
+    def test_the_returned_identity_is_a_string(self):
+        """AR-12
+
+        Both calls, not just the first. A record loaded from the database
+        reads the column back as a `uuid.UUID`; the return type must not
+        depend on whether a copy already existed.
+        """
+        obj = self._make(key="Rowan")
+
+        first = archive(obj)
+        second = archive(obj)
+
+        self.assertEqual(first.archive_id, obj.archive_id)
+        self.assertEqual(second.archive_id, obj.archive_id)
+        self.assertIsInstance(second.archive_id, str)
 
     def test_removed_attributes_are_removed_from_the_copy(self):
         """AR-07"""
@@ -957,6 +1093,40 @@ class TestFind(BaseEvenniaTest):
         archive_id = self._archived_object(level=12)
         self.assertEqual(find_by_attribute("level", 12), [archive_id])
 
+    def _archived_with_strattr(self, key, value):
+        """An archived object carrying one unpickled attribute."""
+        obj = create_object(ArchivableTestObject, key="subject")
+        obj.attributes.add(key, value, strattr=True)
+        archive(obj)
+        return obj.archive_id
+
+    def test_an_unpickled_match_ignores_case(self):
+        """FN-09
+
+        The default, and the `db_strvalue` half — the only half where
+        case exists at all.
+        """
+        archive_id = self._archived_with_strattr("callsign", "Rowan")
+        self.assertEqual(find_by_attribute("callsign", "rowan"), [archive_id])
+
+    def test_case_can_be_required(self):
+        """FN-10"""
+        self._archived_with_strattr("callsign", "Rowan")
+        self.assertEqual(
+            find_by_attribute("callsign", "rowan", case_insensitive=False), []
+        )
+
+    def test_a_pickled_match_is_unaffected_by_the_flag(self):
+        """FN-11
+
+        A pickled value is compared as bytes, so there is no case in it
+        to ignore. The flag must not reach that half and quietly widen it.
+        """
+        archive_id = self._archived_object(title="Grey")
+
+        self.assertEqual(find_by_attribute("title", "Grey"), [archive_id])
+        self.assertEqual(find_by_attribute("title", "grey"), [])
+
     def test_pickled_match_is_type_sensitive(self):
         """FN-04"""
         # Documented behaviour rather than a defect: the same logical
@@ -1078,13 +1248,26 @@ class TestFindByColumn(BaseEvenniaTest):
         )
 
     def test_searches_the_archive_not_the_live_database(self):
-        """FC-08"""
-        # Never archived. username is a column on the live table too, so
-        # an alias leak here finds this account and looks like success.
-        create_account(
-            "mirren", "mirren@example.com", "sekritpw", typeclass=ArchivableTestAccount
+        """FC-08
+
+        Proved by letting the two copies diverge. `username` is a column
+        on the live table as well, so a query that leaked to the default
+        alias would answer from the live row — and both directions here
+        say which row answered.
+        """
+        account = self._archived_account(username="mirren")
+        account.username = "mirren2"
+        account.save()
+
+        # Only the archive still says "mirren".
+        self.assertEqual(
+            find_by_column("accountdb", "username", "mirren"),
+            [account.archive_id],
         )
-        self.assertEqual(find_by_column("accountdb", "username", "mirren"), [])
+        # And only the live database says "mirren2".
+        self.assertEqual(
+            find_by_column("accountdb", "username", "mirren2"), []
+        )
 
     def test_a_column_match_is_not_type_sensitive(self):
         """FC-09"""
@@ -1096,6 +1279,47 @@ class TestFindByColumn(BaseEvenniaTest):
         )
         self.assertEqual(
             find_by_column("accountdb", "is_active", True), [account.archive_id]
+        )
+
+    def test_a_text_column_ignores_case(self):
+        """FC-10
+
+        The default. A consumer searching for a name should not have to
+        know how it was capitalised when it was stored.
+        """
+        account = self._archived_account(username="mirren")
+        self.assertEqual(
+            find_by_column("accountdb", "username", "MiRRen"),
+            [account.archive_id],
+        )
+
+    def test_case_can_be_required_on_a_column(self):
+        """FC-11"""
+        self._archived_account(username="mirren")
+        self.assertEqual(
+            find_by_column(
+                "accountdb", "username", "MiRRen", case_insensitive=False
+            ),
+            [],
+        )
+
+    def test_a_non_text_column_is_unaffected_by_the_flag(self):
+        """FC-12
+
+        `iexact` on a boolean is meaningless, and asking for it must not
+        break a search that works. There is no case to be insensitive
+        about, so the flag falls through to an exact match.
+        """
+        account = self._archived_account()
+        self.assertEqual(
+            find_by_column("accountdb", "is_active", True),
+            [account.archive_id],
+        )
+        self.assertEqual(
+            find_by_column(
+                "accountdb", "is_active", True, case_insensitive=False
+            ),
+            [account.archive_id],
         )
 
 
@@ -1186,13 +1410,23 @@ class TestRestoreUniqueCollision(BaseEvenniaTest):
         account.delete()
         return archive_id
 
+    def _squatter(self, name):
+        """Someone who took the name while its owner was away.
+
+        A plain account typeclass, carrying no mixin. An archivable one
+        would archive itself at creation and be refused by the archive's
+        own UNIQUE on username — which is the collision `validate_username`
+        exists to prevent, and not what these cases are about. Taking a
+        name in the live database is all they need.
+        """
+        return create_account(
+            name, f"{name}@example.com", "sekritpw", typeclass=DefaultAccount
+        )
+
     def test_restores_under_a_numbered_name(self):
         """UC-01"""
         archive_id = self._archived_account()
-        # Someone else took the name while it was free.
-        create_account(
-            "rowan", "squatter@example.com", "sekritpw", typeclass=ArchivableTestAccount
-        )
+        self._squatter("rowan")
 
         restored = restore(archive_id)
 
@@ -1204,17 +1438,13 @@ class TestRestoreUniqueCollision(BaseEvenniaTest):
         # The point of renaming rather than refusing: the name is the
         # recoverable part, the progression behind it is not.
         archive_id = self._archived_account()
-        create_account(
-            "rowan", "squatter@example.com", "sekritpw", typeclass=ArchivableTestAccount
-        )
+        self._squatter("rowan")
         self.assertEqual(restore(archive_id).db.level, 12)
 
     def test_original_name_is_recorded_on_the_restored_object(self):
         """UC-03"""
         archive_id = self._archived_account()
-        create_account(
-            "rowan", "squatter@example.com", "sekritpw", typeclass=ArchivableTestAccount
-        )
+        self._squatter("rowan")
         restored = restore(archive_id)
         self.assertEqual(
             restored.attributes.get(RENAMED_FROM_KEY), {"username": "rowan"}
@@ -1224,10 +1454,7 @@ class TestRestoreUniqueCollision(BaseEvenniaTest):
         """UC-04"""
         archive_id = self._archived_account()
         for taken in ("rowan", "rowan1", "rowan2"):
-            create_account(
-                taken, f"{taken}@example.com", "sekritpw",
-                typeclass=ArchivableTestAccount,
-            )
+            self._squatter(taken)
         self.assertEqual(restore(archive_id).username, "rowan3")
 
     def test_nothing_recorded_when_the_name_was_free(self):

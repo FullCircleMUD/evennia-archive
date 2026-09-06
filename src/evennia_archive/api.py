@@ -24,7 +24,7 @@ lives in the design doc rather than here so there is one copy of it.
 
 from django.core.exceptions import FieldDoesNotExist
 from django.db import DEFAULT_DB_ALIAS, transaction
-from django.db.models import Q
+from django.db.models import CharField, Q, TextField
 from django.utils import timezone
 from evennia.typeclasses.models import Attribute, Tag
 
@@ -310,6 +310,14 @@ def archive(obj):
                 "last_archived": timezone.now(),
             },
         )
+
+        # The column is a UUIDField, which is the right storage type — but
+        # a record loaded from the database reads it back as a uuid.UUID
+        # while one just created still holds the string it was given. The
+        # return type must not depend on whether a copy already existed,
+        # and everything else here speaks strings: the mixins mint and
+        # store them, and both finders coerce.
+        record.archive_id = archive_id
         return record
 
 
@@ -526,7 +534,7 @@ def _model_names_in_archive(model=None):
     )
 
 
-def find_by_attribute(key, value, model=None):
+def find_by_attribute(key, value, model=None, case_insensitive=True):
     """Archive identifiers of objects whose ``key`` attribute holds ``value``.
 
     Returns a list, because the library cannot know whether a consumer's
@@ -548,7 +556,22 @@ def find_by_attribute(key, value, model=None):
     does so silently. The library cannot know what type an attribute holds
     and will not guess, because a wrong guess is a false match rather than
     an error.
+
+    **Case is ignored by default**, on the unpickled half. A consumer
+    searching for a name should not have to know how it was capitalised
+    when it was stored. Pass ``case_insensitive=False`` to require an
+    exact match.
+
+    The flag reaches ``db_strvalue`` only. A pickled value is compared as
+    bytes and has no case in it to ignore, so widening that half would
+    match nothing extra and cost a scan.
     """
+    strvalue_lookup = (
+        "db_attributes__db_strvalue__iexact"
+        if case_insensitive
+        else "db_attributes__db_strvalue"
+    )
+
     found = []
     for model_name in _model_names_in_archive(model):
         db_model = _model_named(model_name)
@@ -566,7 +589,7 @@ def find_by_attribute(key, value, model=None):
             .filter(
                 Q(db_attributes__db_key=key)
                 & (
-                    Q(db_attributes__db_strvalue=value)
+                    Q(**{strvalue_lookup: value})
                     | Q(db_attributes__db_value=value)
                 )
             )
@@ -602,7 +625,7 @@ def _concrete_field(db_model, column):
     return field
 
 
-def find_by_column(model, column, value):
+def find_by_column(model, column, value, case_insensitive=True):
     """Archive identifiers of ``model`` rows whose ``column`` holds ``value``.
 
     The counterpart to ``find_by_attribute()``, and returns the same thing
@@ -631,16 +654,26 @@ def find_by_column(model, column, value):
     Unlike the pickled half of ``find_by_attribute()``, the comparison is
     not type-sensitive: Django coerces the term to the field's type, so a
     string matches a boolean column.
+
+    **Case is ignored by default, on text columns only.** There is no case
+    to be insensitive about in a boolean or an integer, so the flag falls
+    through to an exact match there rather than building an ``iexact``
+    lookup the field cannot answer. Pass ``case_insensitive=False`` to
+    require an exact match on a text column too.
     """
     db_model = _model_named(model if isinstance(model, str) else model.__name__.lower())
     model_name = db_model.__name__.lower()
-    _concrete_field(db_model, column)
+    field = _concrete_field(db_model, column)
+
+    lookup = column
+    if case_insensitive and isinstance(field, (CharField, TextField)):
+        lookup = f"{column}__iexact"
 
     # values_list, never instances — see docs/design.md § The archive
     # holds rows, not objects.
     matches = (
         db_model.objects.using(ARCHIVE_ALIAS)
-        .filter(**{column: value})
+        .filter(**{lookup: value})
         .values_list("pk", flat=True)
     )
 

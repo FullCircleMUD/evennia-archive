@@ -11,6 +11,10 @@ identity surviving and dbrefs
 deliberately not. References between objects are dropped rather than rebuilt, and nothing has been
 tested on PostgreSQL. See [docs/progress.md](https://github.com/FullCircleMUD/evennia-archive/blob/main/docs/progress.md) for what exists and what proves it.
 
+Worth knowing before you install it: an account or a character carrying the mixin is **archived when it
+is created**, so a copy exists without you calling `archive()`. A username the archive holds is also
+refused at registration, so a player who leaves keeps their name.
+
 ## The problem it solves
 
 Evennia identity is the `ObjectDB` primary key. Rebuild your world and those keys are re-issued from
