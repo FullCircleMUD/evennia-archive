@@ -29,6 +29,12 @@ A second Evennia database, on the same schema, migrated alongside the game and *
 — no rooms, no mobs, nothing instantiated. Account and character rows are copied into it as they
 change. Because both ends share a schema, attribute values move as opaque bytes and are never parsed.
 
+That schema clone has one consequence worth knowing before you install: **the archive has to be a
+separate database, not just a separate alias.** Its tables carry Evennia's own names, so pointing it
+at the game's database hands it the game's rows rather than giving it its own. The library refuses to
+start if you do, but it is easier to know now — see
+[docs/installing.md](https://github.com/FullCircleMUD/evennia-archive/blob/main/docs/installing.md).
+
 What replaces that work is reference translation: every stored reference is resolved to a stable
 identifier on the way in, and back to whatever primary key the object receives on the way out.
 

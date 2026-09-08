@@ -70,6 +70,17 @@ there is no model-level fact distinguishing a live character from an archived on
 `db_for_read` to branch on. Access to archived rows is therefore explicit, via `.using("archive")`.
 The router's job for Evennia's tables is `allow_migrate` and nothing else.
 
+**A second alias is not enough; it has to be a second database.** The schema clone is what makes that
+absolute. Every other library of ours can point its alias at the game's database and coexist, because
+its tables carry names of their own. This one's are Evennia's names, so sharing does not produce a
+second `objectdb` — it hands us the first. Archiving would then write into the live rows, and the
+rebuild the library exists to survive would take the archive with it.
+
+`check_settings()` refuses to start when the archive and the game resolve to the same database. That
+is a dict comparison over engine, name, host and port, so it costs nothing and runs before anything
+else does. It compares what the settings say rather than what the server is: two entries reaching one
+database under different hostnames would pass, which is the residue documentation has to carry.
+
 The alias is declared by the consumer and the schema is built by a second migrate call. Both are
 documented in [installing.md](installing.md), and the demo gamedir under `examples/` uses
 that document verbatim so the instructions are what gets tested.

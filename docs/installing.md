@@ -1,11 +1,32 @@
 # Installing
 
-What a consumer does to install this library — three settings entries and one change to their
+What a consumer does to install this library — four settings entries and one change to their
 typeclasses — why each is needed, and the one entry that will silently break an existing game if it
 is copied carelessly.
 
 Everything here is built and tested. The demo gamedir under `examples/` uses this document verbatim,
 so these instructions are what gets exercised rather than a paraphrase of them.
+
+## Read this before you configure the database
+
+**The archive must be a different database from the game. Not a different alias on the same database
+— a different database.**
+
+The archive is a *clone of Evennia's schema*: the same `objectdb`, `accountdb` and forty other table
+names the game uses. That is what lets attribute values move across as opaque bytes and never be
+parsed, and it is why the usual "give every alias its own name and share one Postgres instance"
+arrangement does not work here. Point the `archive` alias at the game's database and it does not get
+its own copy of those tables — it gets the game's. `archive()` then writes into the live data while
+looking like it is archiving, and the world rebuild this library exists to survive destroys the
+archive along with everything else.
+
+If you resolve database connections from environment variables — a per-alias URL, then a shared one,
+then a local file — **the archive cannot use the shared rung.** Give it its own URL or its own file.
+
+The library refuses to start when the two resolve to the same database, so this fails loudly at boot
+rather than quietly at the first restore. The check compares engine, name, host and port; two entries
+that reach one database under different hostnames would pass it, so the constraint is yours to hold
+as well.
 
 ## What a consumer declares
 
