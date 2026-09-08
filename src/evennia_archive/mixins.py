@@ -42,6 +42,7 @@ usual and the identity is still minted:
 
 import uuid
 
+from .log import archive_log
 from .config import ARCHIVE_ID_KEY, OWNER_ACCOUNT_KEY
 
 
@@ -200,6 +201,11 @@ class ArchivableAccountMixin(ArchivableBaseMixin):
         # superuser is not what Evennia demands be present and collides
         # with nothing, so it is archived like any other account.
         if self.pk == 1:
+            archive_log(
+                "account #1 is not archived. Evennia makes one on every "
+                "instance, so a copy could not be restored anywhere without "
+                "displacing the local one."
+            )
             return
 
         # Stored as well as minted. An identity with no row behind it names
@@ -241,6 +247,11 @@ class ArchivableAccountMixin(ArchivableBaseMixin):
         from .api import find_by_column
 
         if find_by_column("accountdb", "username", username):
+            archive_log(
+                f"registration refused: {username!r} is held in the archive. "
+                f"It is not in the live database, so it will not be found "
+                f"there."
+            )
             return False, [
                 f"The name '{username}' belongs to an account that is not "
                 "currently in the game. Please choose another."

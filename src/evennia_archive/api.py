@@ -28,6 +28,7 @@ from django.db.models import CharField, Q, TextField
 from django.utils import timezone
 from evennia.typeclasses.models import Attribute, Tag
 
+from .log import archive_log
 from .config import (
     ARCHIVE_ALIAS,
     ARCHIVE_ID_KEY,
@@ -279,7 +280,15 @@ def archive(obj):
             )
             # A record pointing at a row that is gone falls through to
             # the insert branch rather than crashing. Self-healing costs
-            # nothing and turns a hard failure into a rewrite.
+            # nothing and turns a hard failure into a rewrite — but nothing
+            # else would ever say it happened.
+            if archived_pk is None:
+                archive_log(
+                    f"{archive_id} pointed at {model_name} row "
+                    f"{record.archived_pk}, which is not in the archive. "
+                    f"Rewriting it.",
+                    level="WARN",
+                )
 
         values = _copyable_fields(obj, db_model)
         if archived_pk is None:
@@ -471,6 +480,13 @@ def restore(archive_id, return_object=True):
         return _return_as(db_model, existing_pk, return_object)
 
     renamed = _free_the_unique_values(db_model, values)
+    for field, original in renamed.items():
+        archive_log(
+            f"restoring {archive_id}: {field} {original!r} was taken, "
+            f"restored as {values[field]!r}. The original is recorded on the "
+            f"object under {RENAMED_FROM_KEY!r}.",
+            level="WARN",
+        )
 
     with transaction.atomic():
         # bulk_create for the same reason archive() uses it: a plain

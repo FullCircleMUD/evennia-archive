@@ -28,6 +28,7 @@ from evennia_archive.api import (
     RENAMED_FROM_KEY,
     _copy_attributes,
     _purge_attributes,
+    _purge_tag_links,
     archive,
     delete,
     find_by_attribute,
@@ -2004,3 +2005,123 @@ class TestConfigConstants(BaseEvenniaTest):
             obj.attributes.get(config.ARCHIVE_ID_KEY, strattr=True), obj.archive_id)
         self.assertEqual(config.ARCHIVE_ID_KEY, "archive_id")
         self.assertEqual(config.OWNER_ACCOUNT_KEY, "owner_account_archive_id")
+
+
+# --- LO: what the library logs ----------------------------------------------
+class TestArchiveLogging(BaseEvenniaTest):
+    """The call sites — `LO-01` to `LO-08`.
+
+    The negative cases carry as much weight as the positive ones. Each site
+    sits on a path that also runs constantly, so without them nothing stops a
+    later change turning one into a line per operation.
+    """
+
+    databases = {"default", "archive"}
+
+    def _account(self, key="rowan"):
+        return create_account(
+            key, f"{key}@example.com", "sekritpw", typeclass=ArchivableTestAccount
+        )
+
+    def levels(self, logged):
+        """The level of every line emitted, in order."""
+        return [call.kwargs.get("level", "INFO") for call in logged.call_args_list]
+
+    def test_self_heal_logs_a_warning(self):
+        """LO-01"""
+        obj = create_object(ArchivableTestObject, key="healed")
+        record = archive(obj)
+        # Leave the record pointing at nothing, so the next archive falls
+        # through to the insert branch. The attributes and tag links go first,
+        # as delete() does — dropping the row alone orphans them, and SQLite's
+        # foreign key check catches it at teardown.
+        _purge_attributes(ObjectDB, "archive", record.archived_pk)
+        _purge_tag_links(ObjectDB, record.archived_pk)
+        ObjectDB.objects.using("archive").filter(pk=record.archived_pk)._raw_delete("archive")
+
+        with mock.patch("evennia_archive.api.archive_log") as logged:
+            archive(obj)
+
+        self.assertTrue(logged.called)
+        self.assertEqual(self.levels(logged), ["WARN"])
+        self.assertIn(obj.archive_id, str(logged.call_args))
+
+    def test_an_ordinary_archive_logs_nothing(self):
+        """LO-02"""
+        obj = create_object(ArchivableTestObject, key="quiet")
+
+        with mock.patch("evennia_archive.api.archive_log") as logged:
+            archive(obj)
+            archive(obj)
+
+        logged.assert_not_called()
+
+    def test_a_rename_logs_a_warning(self):
+        """LO-03"""
+        account = self._account()
+        archive_id = account.archive_id
+        archive(account)
+        account.delete()
+        create_account("rowan", "squatter@example.com", "sekritpw",
+                       typeclass=DefaultAccount)
+
+        with mock.patch("evennia_archive.api.archive_log") as logged:
+            restore(archive_id)
+
+        self.assertEqual(self.levels(logged), ["WARN"])
+        message = str(logged.call_args)
+        self.assertIn("rowan", message)
+        self.assertIn("rowan1", message)
+
+    def test_a_restore_without_a_rename_logs_nothing(self):
+        """LO-04"""
+        account = self._account("kestrel")
+        archive_id = account.archive_id
+        archive(account)
+        account.delete()
+
+        with mock.patch("evennia_archive.api.archive_log") as logged:
+            restore(archive_id)
+
+        logged.assert_not_called()
+
+    def test_an_archive_held_username_logs_an_info(self):
+        """LO-05"""
+        account = self._account("held")
+        archive(account)
+        account.delete()
+
+        with mock.patch("evennia_archive.mixins.archive_log") as logged:
+            valid, _ = ArchivableTestAccount.validate_username("held")
+
+        self.assertFalse(valid)
+        self.assertEqual(self.levels(logged), ["INFO"])
+        self.assertIn("held", str(logged.call_args))
+
+    def test_a_free_username_logs_nothing(self):
+        """LO-06"""
+        with mock.patch("evennia_archive.mixins.archive_log") as logged:
+            valid, _ = ArchivableTestAccount.validate_username("unclaimed")
+
+        self.assertTrue(valid)
+        logged.assert_not_called()
+
+    def test_skipping_account_one_logs_an_info(self):
+        """LO-07"""
+        account = self._account("first")
+
+        # `#1` is made by Evennia's initial setup; a test cannot arrange one,
+        # so the hook is called directly with the key faked — as `AM-22` does.
+        with mock.patch.object(type(account), "pk", 1), mock.patch(
+            "evennia_archive.mixins.archive_log"
+        ) as logged:
+            account.at_account_creation()
+
+        self.assertEqual(self.levels(logged), ["INFO"])
+
+    def test_creating_any_other_account_logs_nothing(self):
+        """LO-08"""
+        with mock.patch("evennia_archive.mixins.archive_log") as logged:
+            self._account("ordinary")
+
+        logged.assert_not_called()

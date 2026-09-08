@@ -30,6 +30,7 @@ All test functions live in `src/evennia_archive/tests.py`.
 | `LF` | `lockfuncs` — the lock functions the library ships |
 | `CS` | `check_settings()` — what the library refuses to boot without |
 | `CT` | `config.py` — the constants every other module imports |
+| `LO` | What the library logs — the call sites, where `LG` covers the shim itself |
 
 ## Fixtures
 
@@ -91,6 +92,39 @@ that key, and nothing reads the name back from them.
 | CT-01 | `ArchiveRouter.alias` is `config.ARCHIVE_ALIAS`, not a second literal. The two were independent strings holding `"archive"`, with nothing to say they were the same thing | `TestConfigConstants.test_router_uses_the_config_alias` |
 | CT-02 | `api` routes through `config.ARCHIVE_ALIAS` — the archived copy lands under the alias the router steers | `TestConfigConstants.test_api_routes_through_the_config_alias` |
 | CT-03 | The attribute keys `ARCHIVE_ID_KEY` and `OWNER_ACCOUNT_KEY` resolve to the same values the mixins store, so moving them broke no stored identity | `TestConfigConstants.test_attribute_keys_are_unchanged` |
+
+## What the library logs
+
+`LG` covers the shim; this covers the call sites. A line earns its place where something happens that
+nobody would otherwise see — so the negative cases below are as load-bearing as the positive ones. A
+log an operator has learned to scroll past is worse than no log, and the ordinary operations here run
+at every character creation and every scheduled sweep.
+
+Four sites, all silent today:
+
+- **`archive()` rewriting a record whose row is gone.** A self-heal. It costs nothing and turns a hard
+  failure into a repair, which is why it is right — and why nothing currently says it happened.
+- **`restore()` renaming a taken unique value.** A player's name changed and only that player knows.
+  Somebody will ask why their character is `rowan2` long after the restore.
+- **`validate_username` refusing a name the archive holds.** An ordinary username collision is
+  discoverable: an admin looks in `accountdb` and sees it. This one is not — the account is not there,
+  and without a line the answer to "why was that character not created" exists nowhere.
+- **Account `#1` skipped at creation.** Deliberate and silent, and the first thing to look for on
+  finding that `root` has no archived copy.
+
+Successful `archive()` calls are deliberately not logged: the hook fires at every character creation,
+and the volume would bury the four above.
+
+| ID | Case | Test function |
+|---|---|---|
+| `LO-01` | `archive()` rewriting a record whose archived row is gone logs a `WARN` naming the identity | `TestArchiveLogging.test_self_heal_logs_a_warning` |
+| `LO-02` | An ordinary archive logs nothing. The line marks the repair, not the operation | `TestArchiveLogging.test_an_ordinary_archive_logs_nothing` |
+| `LO-03` | A restore that renames logs a `WARN` naming the value that was taken and the one used instead | `TestArchiveLogging.test_a_rename_logs_a_warning` |
+| `LO-04` | A restore that needed no rename logs nothing | `TestArchiveLogging.test_a_restore_without_a_rename_logs_nothing` |
+| `LO-05` | `validate_username` refusing an archive-held name logs an `INFO` naming it | `TestArchiveLogging.test_an_archive_held_username_logs_an_info` |
+| `LO-06` | A username free in both databases logs nothing | `TestArchiveLogging.test_a_free_username_logs_nothing` |
+| `LO-07` | Skipping account `#1` at creation logs an `INFO` saying why it is exempt | `TestArchiveLogging.test_skipping_account_one_logs_an_info` |
+| `LO-08` | Creating any other account logs nothing | `TestArchiveLogging.test_creating_any_other_account_logs_nothing` |
 
 ## Smoke
 
