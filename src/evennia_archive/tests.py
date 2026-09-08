@@ -2068,10 +2068,13 @@ class TestArchiveLogging(BaseEvenniaTest):
         with mock.patch("evennia_archive.api.archive_log") as logged:
             restore(archive_id)
 
-        self.assertEqual(self.levels(logged), ["WARN"])
-        message = str(logged.call_args)
-        self.assertIn("rowan", message)
-        self.assertIn("rowan1", message)
+        # The restore itself logs an INFO too (LO-09); what this pins is the
+        # WARN, and that it names both values.
+        self.assertIn("WARN", self.levels(logged))
+        renames = [c for c in logged.call_args_list if c.kwargs.get("level") == "WARN"]
+        self.assertEqual(len(renames), 1)
+        self.assertIn("rowan", str(renames[0]))
+        self.assertIn("rowan1", str(renames[0]))
 
     def test_a_restore_without_a_rename_logs_nothing(self):
         """LO-04"""
@@ -2083,7 +2086,8 @@ class TestArchiveLogging(BaseEvenniaTest):
         with mock.patch("evennia_archive.api.archive_log") as logged:
             restore(archive_id)
 
-        logged.assert_not_called()
+        # The restore line still fires; the rename line must not.
+        self.assertNotIn("WARN", self.levels(logged))
 
     def test_an_archive_held_username_logs_an_info(self):
         """LO-05"""
@@ -2123,5 +2127,52 @@ class TestArchiveLogging(BaseEvenniaTest):
         """LO-08"""
         with mock.patch("evennia_archive.mixins.archive_log") as logged:
             self._account("ordinary")
+
+        logged.assert_not_called()
+
+    def test_a_successful_restore_logs_an_info(self):
+        """LO-09"""
+        obj = create_object(ArchivableTestObject, key="returned")
+        archive_id = obj.archive_id
+        archive(obj)
+        obj.delete()
+
+        with mock.patch("evennia_archive.api.archive_log") as logged:
+            restored = restore(archive_id)
+
+        self.assertEqual(self.levels(logged), ["INFO"])
+        message = str(logged.call_args)
+        self.assertIn(archive_id, message)
+        self.assertIn(str(restored.pk), message)
+
+    def test_an_idempotent_restore_logs_nothing(self):
+        """LO-10"""
+        obj = create_object(ArchivableTestObject, key="still-here")
+        archive_id = obj.archive_id
+        archive(obj)
+
+        # The object is still live, so restore() hands it back rather than
+        # rebuilding it. Nothing happened, so nothing is logged.
+        with mock.patch("evennia_archive.api.archive_log") as logged:
+            restore(archive_id)
+
+        logged.assert_not_called()
+
+    def test_a_successful_delete_logs_an_info(self):
+        """LO-11"""
+        obj = create_object(ArchivableTestObject, key="doomed")
+        archive_id = obj.archive_id
+        archive(obj)
+
+        with mock.patch("evennia_archive.api.archive_log") as logged:
+            self.assertTrue(delete(archive_id))
+
+        self.assertEqual(self.levels(logged), ["INFO"])
+        self.assertIn(archive_id, str(logged.call_args))
+
+    def test_deleting_nothing_logs_nothing(self):
+        """LO-12"""
+        with mock.patch("evennia_archive.api.archive_log") as logged:
+            self.assertFalse(delete(str(uuid.uuid4())))
 
         logged.assert_not_called()

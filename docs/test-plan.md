@@ -119,12 +119,30 @@ and the volume would bury the four above.
 |---|---|---|
 | `LO-01` | `archive()` rewriting a record whose archived row is gone logs a `WARN` naming the identity | `TestArchiveLogging.test_self_heal_logs_a_warning` |
 | `LO-02` | An ordinary archive logs nothing. The line marks the repair, not the operation | `TestArchiveLogging.test_an_ordinary_archive_logs_nothing` |
-| `LO-03` | A restore that renames logs a `WARN` naming the value that was taken and the one used instead | `TestArchiveLogging.test_a_rename_logs_a_warning` |
-| `LO-04` | A restore that needed no rename logs nothing | `TestArchiveLogging.test_a_restore_without_a_rename_logs_nothing` |
+| `LO-03` | A restore that renames logs a `WARN` naming the value that was taken and the one used instead, alongside the `INFO` from `LO-09` | `TestArchiveLogging.test_a_rename_logs_a_warning` |
+| `LO-04` | A restore that needed no rename logs no `WARN`. The restore line still fires — what must not is the rename line | `TestArchiveLogging.test_a_restore_without_a_rename_logs_nothing` |
 | `LO-05` | `validate_username` refusing an archive-held name logs an `INFO` naming it | `TestArchiveLogging.test_an_archive_held_username_logs_an_info` |
 | `LO-06` | A username free in both databases logs nothing | `TestArchiveLogging.test_a_free_username_logs_nothing` |
 | `LO-07` | Skipping account `#1` at creation logs an `INFO` saying why it is exempt | `TestArchiveLogging.test_skipping_account_one_logs_an_info` |
 | `LO-08` | Creating any other account logs nothing | `TestArchiveLogging.test_creating_any_other_account_logs_nothing` |
+| `LO-09` | A successful `restore()` logs an `INFO` naming the identity and the primary key it came back under | `TestArchiveLogging.test_a_successful_restore_logs_an_info` |
+| `LO-10` | A restore that returned an object already live logs nothing — nothing was rebuilt | `TestArchiveLogging.test_an_idempotent_restore_logs_nothing` |
+| `LO-11` | A successful `delete()` logs an `INFO` naming the identity it destroyed | `TestArchiveLogging.test_a_successful_delete_logs_an_info` |
+| `LO-12` | `delete()` finding nothing to remove logs nothing. That is its documented normal case, and the reason the other path is worth a line | `TestArchiveLogging.test_deleting_nothing_logs_nothing` |
+
+`LO-09` and `LO-11` are the two operations worth a record beyond the four above.
+
+**A restore is the audit question people ask** — which characters came back after the rebuild, and
+when. The primary key belongs in the line because it is the one fact nobody can reconstruct
+afterwards: identity survives a restore, the dbref does not. It also pairs with `LO-03`, which
+otherwise logs a rename with no record of the restore that caused it.
+
+**`delete()` is the library's only irreversible operation.** A hard delete rather than a flag, so
+that a soft-deleted row cannot resurrect — which means once it is gone the archived copy cannot be
+recovered. Its quiet path is the common one, so a line only appears when something was destroyed.
+
+`[TBD — needs discussion: a bulk restore call is listed in design.md under "not yet examined at all".
+If it lands, `LO-09` becomes a line per object and needs a summary form instead.]`
 
 ## Smoke
 

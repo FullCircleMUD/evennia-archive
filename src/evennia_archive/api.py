@@ -515,6 +515,13 @@ def restore(archive_id, return_object=True):
     ArchiveRecord.objects.using(ARCHIVE_ALIAS).filter(pk=archive_id).update(
         last_restored=timezone.now()
     )
+    # The primary key is the point: identity survives a restore and the dbref
+    # does not, so this is the one fact nobody can reconstruct afterwards.
+    archive_log(
+        f"restored {archive_id} as {record.archived_model} {live_pk}. It comes "
+        f"back with no location, home or owning account — those were keys into "
+        f"a database that has been rebuilt."
+    )
     return _return_as(db_model, live_pk, return_object)
 
 
@@ -725,4 +732,9 @@ def delete(archive_id):
         # be a soft delete through the back door, with a last_archived
         # pointing at nothing.
         ArchiveRecord.objects.using(ARCHIVE_ALIAS).filter(pk=archive_id).delete()
+        archive_log(
+            f"deleted the archived copy of {archive_id} "
+            f"({record.archived_model} {record.archived_pk}). A hard delete — "
+            f"there is nothing left to restore it from."
+        )
         return True
