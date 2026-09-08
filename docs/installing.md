@@ -1,4 +1,4 @@
-# Archive settings
+# Installing
 
 What a consumer does to install this library — three settings entries and one change to their
 typeclasses — why each is needed, and the one entry that will silently break an existing game if it

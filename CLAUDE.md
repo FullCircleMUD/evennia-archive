@@ -109,7 +109,7 @@ evennia-archive/
 ├── runtests.py                # standalone test runner (no consumer gamedir needed)
 ├── docs/                      # design wiki (humans + LLMs)
 ├── examples/
-│   └── demo_game/             # gamedir installed per docs/archive-settings.md
+│   └── demo_game/             # gamedir installed per docs/installing.md
 ├── src/
 │   └── evennia_archive/       # library code (src layout)
 │       ├── api.py             # archive() / restore()

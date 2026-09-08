@@ -53,6 +53,12 @@ DATABASES = {
 
 DATABASE_ROUTERS = ["evennia_archive.db_router.ArchiveRouter"]
 
+# check_settings() runs at django.setup(), so the suite has to boot on a
+# settings module the library accepts. Registered here as well as per-class,
+# because the LF cases override LOCK_FUNC_MODULES inside BaseEvenniaTest and
+# that override does not exist yet when ready() fires.
+LOCK_FUNC_MODULES = list(LOCK_FUNC_MODULES) + ["evennia_archive.lockfuncs"]  # noqa: F405
+
 # Required Django bits
 SECRET_KEY = "test-only-secret"
 TEST_ENVIRONMENT = True

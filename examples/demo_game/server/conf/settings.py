@@ -38,7 +38,7 @@ SERVERNAME = "demo_game"
 ######################################################################
 # evennia-archive
 ######################################################################
-# Copied verbatim from the library's docs/archive-settings.md. This
+# Copied verbatim from the library's docs/installing.md. This
 # gamedir exists to test that those instructions work as written, so if
 # they need adjusting, adjust the document first and re-copy.
 

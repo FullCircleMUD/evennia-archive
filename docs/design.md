@@ -71,7 +71,7 @@ there is no model-level fact distinguishing a live character from an archived on
 The router's job for Evennia's tables is `allow_migrate` and nothing else.
 
 The alias is declared by the consumer and the schema is built by a second migrate call. Both are
-documented in [archive-settings.md](archive-settings.md), and the demo gamedir under `examples/` uses
+documented in [installing.md](installing.md), and the demo gamedir under `examples/` uses
 that document verbatim so the instructions are what gets tested.
 
 > **Unknown — needs a spike.** How this behaves in a project whose *other* apps already have routers.
@@ -188,7 +188,7 @@ into their settings to append it. `evennia-shards` does inject settings from `Ap
 `DATABASE_ROUTERS` is the wrong setting to do it to: `django.db.router.routers` is a
 `cached_property`, so anything that touches the ORM before `ready()` runs snapshots the list without
 us in it and the router silently never applies. A visible line in the consumer's settings cannot fail
-that way. See [archive-settings.md](archive-settings.md).
+that way. See [installing.md](installing.md).
 
 ## Identity
 
@@ -283,7 +283,7 @@ delete:owns_character() or perm(Admin)
 
 `owns_character()` compares the accessor's `archive_id` to the character's owner stamp. It takes no
 argument, so the lock and the stamp cannot come to name different accounts. A consumer registers it
-in `LOCK_FUNC_MODULES` — see [archive-settings.md](archive-settings.md) — and a missing registration
+in `LOCK_FUNC_MODULES` — see [installing.md](installing.md) — and a missing registration
 refuses everyone rather than admitting them.
 
 The permission clauses are Evennia's own, kept so an administrator and a superuser get in exactly as

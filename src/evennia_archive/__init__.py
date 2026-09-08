@@ -20,7 +20,7 @@ identity that matches a live row to its archived copy. Nothing else is
 archivable, and nothing is archived until you ask.
 
 Installation — the app, a second database alias and a router — is in
-docs/archive-settings.md.
+docs/installing.md.
 """
 
 __version__ = "0.1.0"

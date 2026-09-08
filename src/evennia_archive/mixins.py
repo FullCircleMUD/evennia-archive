@@ -42,16 +42,7 @@ usual and the identity is still minted:
 
 import uuid
 
-# The Attribute key. Changing this orphans every archived row in every
-# existing install — it is the one name in this library that cannot be
-# revised after release.
-ARCHIVE_ID_KEY = "archive_id"
-
-# The Attribute key naming the account a character belongs to, holding that
-# account's archive_id. The archive drops db_account on the way in — it is a
-# primary key, and those mean nothing in the other database — so this is the
-# only link from a character back to its owner that survives a restore.
-OWNER_ACCOUNT_KEY = "owner_account_archive_id"
+from .config import ARCHIVE_ID_KEY, OWNER_ACCOUNT_KEY
 
 
 class ArchivableBaseMixin:

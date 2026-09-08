@@ -23,5 +23,5 @@ recorded.
 
 | Document | What it covers |
 |---|---|
-| [archive-settings.md](archive-settings.md) | What a consumer declares in their own settings — the app, the database alias, the router — plus the migrate commands and the verified schema-clone behaviour |
+| [installing.md](installing.md) | Everything a consumer does to get the library running — the app, the database alias, the router, the lock functions, the mixins, plus the migrate commands and the verified schema-clone behaviour |
 | [interoperability.md](interoperability.md) | This library against every sibling library in `libraries/` |

@@ -8,7 +8,7 @@ from unittest import TestCase as PlainTestCase
 from unittest import mock
 
 from django.conf import settings
-from django.core.exceptions import FieldDoesNotExist
+from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.test import override_settings
 from evennia.accounts.accounts import DefaultAccount
 from evennia.locks import lockhandler
@@ -20,6 +20,8 @@ from evennia.utils.create import create_account, create_object
 from evennia.utils.test_resources import BaseEvenniaTest
 
 import evennia_archive
+from evennia_archive import config
+from evennia_archive.config import check_settings
 from evennia_archive.api import (
     NotArchivable,
     NotArchived,
@@ -1891,3 +1893,114 @@ class TestCopyAttributes(BaseEvenniaTest):
         keys = self._archived_keys(archived_pk)
         self.assertIn("hometown", keys)
         self.assertNotIn("impostor", keys)
+
+
+# --- CS: check_settings() ----------------------------------------------------
+_VALID_DATABASES = {
+    "default": {"ENGINE": "django.db.backends.sqlite3", "NAME": "game.db3"},
+    "archive": {"ENGINE": "django.db.backends.sqlite3", "NAME": "archive.db3"},
+}
+
+
+class TestCheckSettings(PlainTestCase):
+    """What the library refuses to boot without — `CS-01` to `CS-07`.
+
+    Each case overrides the one entry it is about and leaves the rest valid:
+    a case that broke two at once could not tell which produced the message.
+    """
+
+    def check(self, **overrides):
+        """Run check_settings() under a valid settings module plus overrides."""
+        base = {"DATABASES": _VALID_DATABASES,
+                "LOCK_FUNC_MODULES": _LOCK_FUNC_MODULES}
+        base.update(overrides)
+        with override_settings(**base):
+            check_settings()
+
+    def test_complete_settings_pass(self):
+        """CS-01"""
+        self.check()
+
+    def test_missing_archive_alias_raises(self):
+        """CS-02"""
+        with self.assertRaises(ImproperlyConfigured) as raised:
+            self.check(DATABASES={"default": _VALID_DATABASES["default"]})
+        self.assertIn("archive", str(raised.exception))
+        self.assertIn("DATABASES", str(raised.exception))
+
+    def test_archive_sharing_the_game_database_raises(self):
+        """CS-03"""
+        same = dict(_VALID_DATABASES["default"])
+        with self.assertRaises(ImproperlyConfigured) as raised:
+            self.check(DATABASES={"default": _VALID_DATABASES["default"], "archive": same})
+        self.assertIn("same database", str(raised.exception).lower())
+
+    def test_missing_lockfunc_module_raises(self):
+        """CS-04"""
+        with self.assertRaises(ImproperlyConfigured) as raised:
+            self.check(LOCK_FUNC_MODULES=("evennia.locks.lockfuncs",))
+        self.assertIn("evennia_archive.lockfuncs", str(raised.exception))
+
+    def test_every_problem_in_one_raise(self):
+        """CS-05"""
+        with self.assertRaises(ImproperlyConfigured) as raised:
+            self.check(DATABASES={"default": _VALID_DATABASES["default"]},
+                       LOCK_FUNC_MODULES=("evennia.locks.lockfuncs",))
+        message = str(raised.exception)
+        self.assertIn("archive", message)
+        self.assertIn("evennia_archive.lockfuncs", message)
+
+    def test_a_rejected_value_does_not_stop_later_clauses(self):
+        """CS-06"""
+        with self.assertRaises(ImproperlyConfigured) as raised:
+            self.check(DATABASES={}, LOCK_FUNC_MODULES=("evennia.locks.lockfuncs",))
+        self.assertIn("evennia_archive.lockfuncs", str(raised.exception))
+
+    def test_ready_calls_check_settings(self):
+        """CS-07"""
+        from evennia_archive.apps import EvenniaArchiveConfig
+
+        with mock.patch("evennia_archive.config.check_settings") as checked:
+            EvenniaArchiveConfig.ready(mock.Mock())
+        checked.assert_called_once()
+
+
+# --- CT: config.py -----------------------------------------------------------
+class TestConfigConstants(BaseEvenniaTest):
+    """The constants every other module imports — `CT-01` to `CT-03`."""
+
+    databases = {"default", "archive"}
+
+    def test_router_uses_the_config_alias(self):
+        """CT-01"""
+        import inspect
+
+        from evennia_archive import db_router
+
+        # Comparing the values proves nothing: Python interns short strings, so
+        # two independent "archive" literals are the same object. The fact worth
+        # pinning is that the router holds no literal of its own.
+        source = inspect.getsource(db_router)
+        self.assertIn("from .config import", source)
+        self.assertNotIn('"archive"', source)
+        self.assertEqual(db_router.ArchiveRouter.alias, config.ARCHIVE_ALIAS)
+
+    def test_api_routes_through_the_config_alias(self):
+        """CT-02"""
+        obj = create_object(ArchivableTestObject, key="router-alias")
+        record = archive(obj)
+        landed = (
+            ObjectDB.objects.using(config.ARCHIVE_ALIAS)
+            .filter(pk=record.archived_pk)
+            .values_list("db_key", flat=True)
+            .first()
+        )
+        self.assertEqual(landed, "router-alias")
+
+    def test_attribute_keys_are_unchanged(self):
+        """CT-03"""
+        obj = create_object(ArchivableTestObject, key="keys")
+        self.assertEqual(
+            obj.attributes.get(config.ARCHIVE_ID_KEY, strattr=True), obj.archive_id)
+        self.assertEqual(config.ARCHIVE_ID_KEY, "archive_id")
+        self.assertEqual(config.OWNER_ACCOUNT_KEY, "owner_account_archive_id")

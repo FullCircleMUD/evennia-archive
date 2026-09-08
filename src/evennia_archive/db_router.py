@@ -8,16 +8,18 @@ can be migrated into the same alias to form the schema clone.
 Migrate with:  evennia migrate --database archive
 """
 
+from .config import ARCHIVE_ALIAS
+
 
 class ArchiveRouter:
     """Route evennia_archive models to the archive database."""
 
-    # The app label and the alias are separate here, where sibling
-    # routers use one name for both. The app is ``evennia_archive``; the
-    # database alias a consumer declares is ``archive``. Conflating them
-    # would route this library's models to an alias that does not exist.
+    # The app label and the alias are separate here, where sibling routers
+    # use one name for both. The app is ``evennia_archive``; the alias a
+    # consumer declares is ``archive``. Conflating them would route this
+    # library's models to an alias that does not exist.
     app_label = "evennia_archive"
-    alias = "archive"
+    alias = ARCHIVE_ALIAS
 
     # Sibling routers are exclusive: nothing but their own models may
     # enter their database. This one is not, and that is the whole point

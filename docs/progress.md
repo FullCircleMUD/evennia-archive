@@ -161,7 +161,7 @@ rebuilt one. Not published, and not yet used by a consumer game.
 
 **What proves it**
 
-A full install from a bare gamedir, following [archive-settings.md](archive-settings.md) verbatim so
+A full install from a bare gamedir, following [installing.md](installing.md) verbatim so
 the instructions are what gets exercised:
 
 | | `evennia.db3` | `archive.db3` |

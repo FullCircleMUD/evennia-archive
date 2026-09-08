@@ -28,14 +28,15 @@ from django.db.models import CharField, Q, TextField
 from django.utils import timezone
 from evennia.typeclasses.models import Attribute, Tag
 
-from .mixins import (
+from .config import (
+    ARCHIVE_ALIAS,
     ARCHIVE_ID_KEY,
-    ArchivableBaseMixin,
-    ArchivableCharacterMixin,
+    DROPPED_REFERENCES,
+    MAX_RENAME_ATTEMPTS,
+    RENAMED_FROM_KEY,
 )
+from .mixins import ArchivableBaseMixin, ArchivableCharacterMixin
 from .models import ArchiveRecord
-
-ARCHIVE_ALIAS = "archive"
 
 
 def _model_named(model_name):
@@ -53,12 +54,6 @@ def _model_named(model_name):
             return model
     raise LookupError(f"no model named {model_name!r}")
 
-# Foreign keys into the live database. Dropped rather than copied — a
-# primary key means nothing across two databases. Rebuilding the
-# relationships they describe is the reference-translation work, which
-# needs a disposition table that does not exist yet.
-# See docs/design.md § Reference translation.
-_DROPPED_REFERENCES = {"db_location", "db_home", "db_destination", "db_account"}
 
 
 class NotArchivable(ValueError):
@@ -107,7 +102,7 @@ def _copyable_fields(obj, db_model):
     """The object's own column values, minus its key and its references."""
     values = {}
     for field in db_model._meta.concrete_fields:
-        if field.primary_key or field.name in _DROPPED_REFERENCES:
+        if field.primary_key or field.name in DROPPED_REFERENCES:
             continue
         values[field.attname] = getattr(obj, field.attname)
     return values
@@ -325,14 +320,7 @@ class NotArchived(LookupError):
     """Raised when nothing in the archive carries the given identity."""
 
 
-# Where a restored object records a value it could not keep. The game can
-# read it whenever it likes — at restore, or the next time the player logs
-# in — and offer them a rename. Deleting it is the consumer's business.
-RENAMED_FROM_KEY = "archive_renamed_from"
 
-# A restore that cannot find a free value after this many tries is stuck
-# rather than unlucky.
-_MAX_RENAME_ATTEMPTS = 1000
 
 
 def _conflicting_field(db_model, values):
@@ -375,7 +363,7 @@ def _free_the_unique_values(db_model, values):
 
     while field is not None:
         original = renamed.setdefault(field, value)
-        for attempt in range(1, _MAX_RENAME_ATTEMPTS + 1):
+        for attempt in range(1, MAX_RENAME_ATTEMPTS + 1):
             candidate = f"{original}{attempt}"
             if not db_model.objects.filter(**{field: candidate}).exists():
                 values[field] = candidate
@@ -383,7 +371,7 @@ def _free_the_unique_values(db_model, values):
         else:
             raise RuntimeError(
                 f"no free {field} based on {original!r} after "
-                f"{_MAX_RENAME_ATTEMPTS} attempts"
+                f"{MAX_RENAME_ATTEMPTS} attempts"
             )
         field, value = _conflicting_field(db_model, values)
 

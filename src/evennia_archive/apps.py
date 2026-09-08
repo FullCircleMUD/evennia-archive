@@ -4,10 +4,10 @@
 Only loaded when the consumer adds ``evennia_archive`` to
 ``INSTALLED_APPS``.
 
-Deliberately empty of a ``ready()`` hook for now. Whether the library
-appends its own router here — the pattern evennia-shards uses for
-middleware — or leaves the consumer to declare it is an open spike; see
-docs/archive-settings.md.
+``ready()`` runs the boot check. The consumer declares the router in their
+own settings rather than the library appending it here: ``django.db.router.routers``
+is a ``cached_property``, so anything touching the ORM before ``ready()``
+snapshots the list without us in it. See docs/installing.md.
 """
 
 from django.apps import AppConfig
@@ -16,3 +16,9 @@ from django.apps import AppConfig
 class EvenniaArchiveConfig(AppConfig):
     name = "evennia_archive"
     default_auto_field = "django.db.models.BigAutoField"
+
+    def ready(self):
+        """Refuse to start on a settings module this library cannot work with."""
+        from .config import check_settings
+
+        check_settings()

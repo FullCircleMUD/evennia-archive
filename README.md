@@ -59,7 +59,7 @@ python runtests.py
 ```
 
 Installing the package is not enough on its own — a consumer declares the app, a second database
-alias and a router in their own settings. **See [docs/archive-settings.md](https://github.com/FullCircleMUD/evennia-archive/blob/main/docs/archive-settings.md)
+alias and a router in their own settings. **See [docs/installing.md](https://github.com/FullCircleMUD/evennia-archive/blob/main/docs/installing.md)
 for what to add**, including the one entry that will silently break a game that already has database
 routers.
 
@@ -67,7 +67,7 @@ routers.
 
 - [docs/INDEX.md](https://github.com/FullCircleMUD/evennia-archive/blob/main/docs/INDEX.md) — the design wiki
 - [docs/design.md](https://github.com/FullCircleMUD/evennia-archive/blob/main/docs/design.md) — the whole design, with a box above everything not yet settled
-- [docs/archive-settings.md](https://github.com/FullCircleMUD/evennia-archive/blob/main/docs/archive-settings.md) — what a consumer declares in their settings
+- [docs/installing.md](https://github.com/FullCircleMUD/evennia-archive/blob/main/docs/installing.md) — what a consumer declares in their settings
 - [docs/interoperability.md](https://github.com/FullCircleMUD/evennia-archive/blob/main/docs/interoperability.md) — this library against its siblings
 - [CLAUDE.md](https://github.com/FullCircleMUD/evennia-archive/blob/main/CLAUDE.md) — context for LLM agents working in this repo
 

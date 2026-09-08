@@ -28,6 +28,8 @@ All test functions live in `src/evennia_archive/tests.py`.
 | `PG` | `_purge_attributes()` — clearing one row's attributes in one database |
 | `CP` | `_copy_attributes()` — moving one row's attributes between the two databases |
 | `LF` | `lockfuncs` — the lock functions the library ships |
+| `CS` | `check_settings()` — what the library refuses to boot without |
+| `CT` | `config.py` — the constants every other module imports |
 
 ## Fixtures
 
@@ -37,6 +39,58 @@ All test functions live in `src/evennia_archive/tests.py`.
 | Distinct `TEST["NAME"]` shared-cache URIs in `tests/test_settings.py` | Two aliases both saying `:memory:` look like one database to Django's runner, which then treats the second as a mirror of the first. The router would appear to work while both pointed at the same file — so a copy landing in the wrong alias would pass |
 | `override_settings(LOCK_FUNC_MODULES=...)` plus a `_cache_lockfuncs()` rebuild, on `LF`'s case class | Evennia's `BaseEvenniaTest` applies its own `override_settings` that **replaces** `LOCK_FUNC_MODULES` outright, so a module registered in `tests/test_settings.py` is invisible inside it. And `_LOCKFUNCS` is a process-wide cache built once on the first `LockHandler`, so overriding the setting changes nothing until the cache is rebuilt under it. Both halves are needed; either alone silently leaves the function unregistered |
 | `ArchivableTestObject` / `ArchivableTestAccount` / `ArchivableTestCharacter` | Minimal typeclasses carrying the matching kind-specific mixin. All three are needed: an account has a different creation hook, a unique username and Django's `PermissionsMixin` bolted on, and a character is the only kind an account stamps |
+| `override_settings(DATABASES=..., LOCK_FUNC_MODULES=...)` on `CS`'s case class | `check_settings()` reads its settings when called, so each case overrides the one entry it is about and leaves the rest valid. A case that broke two at once could not tell which produced the message |
+
+## `check_settings()`
+
+What the library refuses to start without. Every problem is collected and raised together: a consumer
+installing this has more than one thing to declare, and stopping at the first turns that into
+fix-restart-fix-restart, once per entry.
+
+Two entries are refusals, and the reasoning differs:
+
+- **The `archive` alias** — without it every call raises `ConnectionDoesNotExist` at first use, which
+  is the deferred failure boot checking exists to prevent.
+- **`LOCK_FUNC_MODULES`** — without `evennia_archive.lockfuncs` the `owns_character()` clause cannot
+  resolve, so every ownership check evaluates false and refuses the owning account its own character.
+  It fails in the safe direction and looks exactly like a permissions bug.
+
+`CS-03` is the one that is not obvious. An `archive` alias pointing at the same database as `default`
+passes every other check and destroys the guarantee the library exists for: the archive tables *are*
+the live tables, so the rebuild it is meant to survive takes it with it. It is a dict comparison, no
+query.
+
+`[TBD — needs discussion: whether a missing router is refused, logged, or ignored. It does not stop
+the library working — every query names the alias explicitly — so by the "anything that stops it
+running" rule it is not a refusal. `CS-08` assumes a WARN through the shim, which would also give
+`archive_log` its first caller. Confirm before the test is written.]`
+
+Not checked, and stated in `installing.md` under *what is not checked for you*: `INSTALLED_APPS`,
+because `AppConfig.ready()` never runs without it, and whether the archive has been migrated, because
+that needs a database query inside `ready()`.
+
+| ID | Case | Test function |
+|---|---|---|
+| CS-01 | A complete settings module passes — `check_settings()` returns without raising | `TestCheckSettings.test_complete_settings_pass` |
+| CS-02 | No `archive` entry in `DATABASES` raises `ImproperlyConfigured`, and the message names the key to add | `TestCheckSettings.test_missing_archive_alias_raises` |
+| CS-03 | An `archive` entry naming the same database as `default` raises. Same engine and same name means the archive tables are the live tables, and the rebuild the library exists to survive destroys it | `TestCheckSettings.test_archive_sharing_the_game_database_raises` |
+| CS-04 | `LOCK_FUNC_MODULES` without `evennia_archive.lockfuncs` raises, and the message says ownership checks refuse everyone without it | `TestCheckSettings.test_missing_lockfunc_module_raises` |
+| CS-05 | Two faults produce one exception naming both. A consumer gets the whole list or a clean start, never one restart per mistake | `TestCheckSettings.test_every_problem_in_one_raise` |
+| CS-06 | A `DATABASES` that is missing entirely does not mask the lock-function check — the clause that follows a rejected value still runs and still reports | `TestCheckSettings.test_a_rejected_value_does_not_stop_later_clauses` |
+| CS-07 | `AppConfig.ready()` calls `check_settings()`, so the refusal happens at boot rather than at first use | `TestCheckSettings.test_ready_calls_check_settings` |
+| CS-08 | A missing router is reported without refusing `[TBD — see above]` | |
+
+## `config.py`
+
+The library's constants, in one file, imported wherever they are needed. `ARCHIVE_ALIAS` is a constant
+rather than a setting: the alias is always `archive`, a consumer declares a `DATABASES` entry under
+that key, and nothing reads the name back from them.
+
+| ID | Case | Test function |
+|---|---|---|
+| CT-01 | `ArchiveRouter.alias` is `config.ARCHIVE_ALIAS`, not a second literal. The two were independent strings holding `"archive"`, with nothing to say they were the same thing | `TestConfigConstants.test_router_uses_the_config_alias` |
+| CT-02 | `api` routes through `config.ARCHIVE_ALIAS` — the archived copy lands under the alias the router steers | `TestConfigConstants.test_api_routes_through_the_config_alias` |
+| CT-03 | The attribute keys `ARCHIVE_ID_KEY` and `OWNER_ACCOUNT_KEY` resolve to the same values the mixins store, so moving them broke no stored identity | `TestConfigConstants.test_attribute_keys_are_unchanged` |
 
 ## Smoke
 
