@@ -19,18 +19,17 @@ For the design wiki, read [docs/INDEX.md](docs/INDEX.md).
 
 ## Project status
 
-**Working, published, not yet in production.** On PyPI as `evennia-archive` 0.1.0, and wired into
-FullCircleMUD on a branch — pinned in its requirements, with archivable mixins on its account and
-character typeclasses — but not merged and not deployed. All five calls — `archive()`,
-`find_by_attribute()`, `find_by_column()`, `restore()`, `delete()` — are built and tested, and the round trip closes for both objects and accounts. References between
-objects are dropped rather than translated, and nothing has run on PostgreSQL. For current state read
-[docs/progress.md](docs/progress.md).
+**Working, published, not yet in production.** For what exists, what proves it and what does not
+exist yet, read [docs/progress.md](docs/progress.md) — it is the only place that state is kept, so
+this section stays a pointer rather than a second copy that ages.
 
 ## Where to read first
 
 1. [README.md](README.md) — what the library is and the problem it solves.
-2. [docs/INDEX.md](docs/INDEX.md) — map of the design docs.
-3. [docs/progress.md](docs/progress.md) — what actually exists right now.
+2. [docs/test-plan.md](docs/test-plan.md) — **where a behavioural change starts.** A case lands here
+   before the test, and the test before the code.
+3. [docs/INDEX.md](docs/INDEX.md) — map of the design docs.
+4. [docs/progress.md](docs/progress.md) — what actually exists right now.
 
 ## Load-bearing architectural principles
 
@@ -59,7 +58,10 @@ Agreed in the design conversation of 2026-08-23. Every implementation decision m
    — a value from anywhere else either fails at write time as an invalid UUID, or collides and makes
    `restore()` return the wrong object with nothing in any log. So `archive()` tests for the mixin
    itself rather than for the attribute. See `AR-09` in the test plan.
-6. **Vanilla first.** The library must be fully useful with no optional integration present. Every
+6. **Test-first.** A case lands in [docs/test-plan.md](docs/test-plan.md), then the test, then the
+   code. The plan is a commitment rather than a wishlist, and its `Test function` column is the
+   coverage trail. See [test-first-process.md](../../design/test-first-process.md).
+7. **Vanilla first.** The library must be fully useful with no optional integration present. Every
    enhancement degrades to the plain behaviour rather than becoming a requirement.
 
 ## Out of scope
@@ -69,6 +71,13 @@ Decided as questions arise — the project is too young for a settled list. Ruli
 - **Database backups.** This is not `pg_dump` and is not a substitute for backing up a database.
 - **Consumer-minted identifiers.** Identity is the mixin's to mint, not the consumer's to supply. See
   principle 5.
+- **A database-resolution helper, for now.** The standard has a library owning an alias ship an
+  `archive_database()` / `describe_archive_database()` pair, and the linter reports its absence as
+  `database_helper_missing`. That is a **deliberate deferral, not an oversight**: `evennia-database-cascade`
+  is being built to formalise exactly that resolution, and this library will take it as a direct
+  dependency rather than hand-roll a second implementation to throw away. The consumer writes the
+  `DATABASES` entry by hand until then. Do not close the warn by writing the helper — see
+  [docs/interoperability.md](docs/interoperability.md) § evennia-database-cascade.
 
 ## Working conventions
 
@@ -112,10 +121,15 @@ evennia-archive/
 │   └── demo_game/             # gamedir installed per docs/installing.md
 ├── src/
 │   └── evennia_archive/       # library code (src layout)
-│       ├── api.py             # archive() / restore()
+│       ├── api.py             # archive() / restore() / find / delete
+│       ├── apps.py            # AppConfig; ready() runs the boot check
+│       ├── config.py          # every constant, and check_settings()
+│       ├── db_router.py       # ArchiveRouter
+│       ├── lockfuncs.py       # owns_character()
+│       ├── log.py             # the logging shim
+│       ├── migrations/        # ArchiveRecord's schema
 │       ├── mixins.py          # the archivable mixins
 │       ├── models.py          # ArchiveRecord
-│       ├── db_router.py       # ArchiveRouter
 │       └── tests.py           # unit tests (run via runtests.py)
 └── tests/                     # standalone test settings (test_settings.py, urls.py)
 ```

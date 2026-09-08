@@ -26,6 +26,10 @@ from django.core.exceptions import FieldDoesNotExist
 from django.db import DEFAULT_DB_ALIAS, transaction
 from django.db.models import CharField, Q, TextField
 from django.utils import timezone
+# Attributes and tags hang off ObjectDB through Evennia's own m2m tables, and
+# the copy works at those tables directly rather than through a row's manager —
+# reaching a manager means holding the instance, which is the unsafe thing here.
+# So this needs the models, not the typeclasses.
 from evennia.typeclasses.models import Attribute, Tag
 
 from .log import archive_log

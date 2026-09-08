@@ -3,8 +3,8 @@
 Catalogue of every design document in this wiki. A document that is not listed here is invisible, so
 index new ones as they are written.
 
-The library is at scaffold stage, so this list is short. It will grow as design decisions are made and
-recorded.
+The list is short because the design is held in one document rather than many. It grows as decisions
+are made that do not belong there.
 
 ## Design
 

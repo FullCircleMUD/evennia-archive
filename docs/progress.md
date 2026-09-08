@@ -3,6 +3,39 @@
 Reverse-chronological milestone log. Newest first. Each entry states what became true and what proves
 it.
 
+## 2026-09-08 — Refusing a settings module it cannot work with
+
+156 tests.
+
+**`config.py` holds every constant, and `check_settings()`.** Called from `AppConfig.ready()`, so a
+misconfigured instance refuses to start rather than failing at the first archive. Three refusals,
+collected and raised together: no `archive` entry in `DATABASES`, `LOCK_FUNC_MODULES` without
+`evennia_archive.lockfuncs`, and the archive naming the same database as `default`. Cases `CS-01` to
+`CS-07`.
+
+**The archive cannot share the game's database, and now says so.** It is a clone of Evennia's schema,
+so pointing its alias at the game's database does not give it a second set of tables — it hands it
+Evennia's. Archiving would write into the live rows and the rebuild would take both. Every other
+alias in the corpus owns uniquely-named tables and shares perfectly well; this one is the exception.
+The check compares `TEST["NAME"]` alongside engine, name, host and port, because under Django's test
+runner that is the database an alias actually uses — without it the check refused the library's own
+suite.
+
+**Constants moved to `config.py` and are imported where needed.** `db_router.py` held a second
+independent `"archive"` literal with nothing to say it was the same string as `api.py`'s. Cases
+`CT-01` to `CT-03`.
+
+**Six log sites, chosen because nothing else would report them.** A raise that reaches its caller is
+already reported, so these are the paths where no exception is thrown and no message reaches anyone:
+the `archive()` self-heal, a `restore()` rename, a username refused because the archive holds it,
+account `#1` being skipped, and a successful restore or delete. Every case has a negative twin —
+each site sits on a path that also runs constantly, and a log an operator has learned to scroll past
+is worse than no log. Cases `LO-01` to `LO-12`.
+
+**`installing.md` carries numbered steps, both settings tables and a "what is not checked for you"
+section**, and `interoperability.md` covers all sixteen siblings rather than six. `evennia-database-cascade`
+is recorded there as an agreed hard dependency that is not yet in place.
+
 ## 2026-09-06 — An identity always has a row behind it
 
 134 tests.

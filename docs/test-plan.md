@@ -61,10 +61,11 @@ passes every other check and destroys the guarantee the library exists for: the 
 the live tables, so the rebuild it is meant to survive takes it with it. It is a dict comparison, no
 query.
 
-`[TBD — needs discussion: whether a missing router is refused, logged, or ignored. It does not stop
-the library working — every query names the alias explicitly — so by the "anything that stops it
-running" rule it is not a refusal. `CS-08` assumes a WARN through the shim, which would also give
-`archive_log` its first caller. Confirm before the test is written.]`
+`CS-08` is retired. A missing router is **not checked**. It does not stop the library working — every
+query names the alias explicitly — so refusing to start over it would be disproportionate, and a
+warning nobody reads is not worth the call site. Its absence leaves a stray
+`evennia_archive_archiverecord` in the game database and nothing else. Stated in `installing.md`
+under *what is not checked for you*. Do not reuse the ID.
 
 Not checked, and stated in `installing.md` under *what is not checked for you*: `INSTALLED_APPS`,
 because `AppConfig.ready()` never runs without it, and whether the archive has been migrated, because
@@ -79,7 +80,6 @@ that needs a database query inside `ready()`.
 | CS-05 | Two faults produce one exception naming both. A consumer gets the whole list or a clean start, never one restart per mistake | `TestCheckSettings.test_every_problem_in_one_raise` |
 | CS-06 | A `DATABASES` that is missing entirely does not mask the lock-function check — the clause that follows a rejected value still runs and still reports | `TestCheckSettings.test_a_rejected_value_does_not_stop_later_clauses` |
 | CS-07 | `AppConfig.ready()` calls `check_settings()`, so the refusal happens at boot rather than at first use | `TestCheckSettings.test_ready_calls_check_settings` |
-| CS-08 | A missing router is reported without refusing `[TBD — see above]` | |
 
 ## `config.py`
 
