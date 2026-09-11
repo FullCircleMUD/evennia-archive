@@ -24,6 +24,11 @@ routers. Each answers only for its own app label, so neither captures the other'
 
 This library.
 
+## evennia-calendar
+
+**No coupling.** Neither imports the other. Game time is derived from Evennia's own clock and the
+calendar owns no tables; nothing archived refers to it, and a restore changes nothing it reads.
+
 ## evennia-database-cascade
 
 **Hard dependency — agreed, not yet in place.** The cascade formalises how an alias resolves its
@@ -51,6 +56,12 @@ library to survive a restore.
 
 **No coupling.** Neither imports the other. llm-service holds no game state and owns no tables this
 library would copy.
+
+## evennia-logging-extension
+
+**Hard dependency.** `log.py` binds `archive_log` through its `make_logger`, and every line this
+library emits is delivered by the extension — including lines from the pre-reactor window, where
+Evennia's own `log_file` would lose them.
 
 ## evennia-message-bus
 

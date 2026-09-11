@@ -30,7 +30,7 @@ All test functions live in `src/evennia_archive/tests.py`.
 | `LF` | `lockfuncs` — the lock functions the library ships |
 | `CS` | `check_settings()` — what the library refuses to boot without |
 | `CT` | `config.py` — the constants every other module imports |
-| `LO` | What the library logs — the call sites, where `LG` covers the shim itself |
+| `LO` | What the library logs — the call sites, where `LG` covers the binding |
 
 ## Fixtures
 
@@ -95,7 +95,7 @@ that key, and nothing reads the name back from them.
 
 ## What the library logs
 
-`LG` covers the shim; this covers the call sites. A line earns its place where something happens that
+`LG` covers the binding; this covers the call sites. A line earns its place where something happens that
 nobody would otherwise see — so the negative cases below are as load-bearing as the positive ones. A
 log an operator has learned to scroll past is worse than no log, and the ordinary operations here run
 at every character creation and every scheduled sweep.
@@ -153,23 +153,14 @@ If it lands, `LO-09` becomes a line per object and needs a summary form instead.
 
 ## Logging
 
-The library logs to a file of its own rather than into the main server log, through a shim copied
-verbatim from its siblings. An archive or a restore is exactly the kind of operation someone reads the
-log for afterwards, and picking its lines out of everything else the game emitted is the thing this
-avoids.
+The library logs to a file of its own rather than into the main server log. The mechanism —
+delivery, levels, trace handling — belongs to `evennia-logging-extension` and is tested there;
+`log.py` here only binds `archive_log` to `archive.log`, and one case proves the binding. What the
+library logs, and from where, is the `LO` section.
 
 | ID | Case | Test function |
 |---|---|---|
-| `LG-01` | A line goes to `archive.log`, prefixed with its level | `test_writes_to_the_library_log_file` |
-| `LG-02` | A level outside `INFO`/`WARN`/`ERROR` coerces to `INFO` and never raises | `test_unknown_level_coerces_to_info` |
-| `LG-03` | With Evennia unimportable the call is a silent no-op | `test_is_a_silent_noop_without_evennia` |
-| `LG-04` | `trace=True` outside an `except` block adds nothing — no `NoneType: None` noise | `test_trace_outside_an_except_block_adds_nothing` |
-| `LG-05` | `trace=True` inside an `except` block appends the traceback | `test_trace_inside_an_except_block_appends_the_traceback` |
-| `LG-06` | The shim writes to the library's own filename, not the server log | `test_log_filename_is_the_libraries_own` |
-
-**Nothing calls the shim yet.** The cases above cover the shim itself; no operation in the library
-emits a line. `[TBD — needs discussion: what archive should log. The candidates are the four public
-calls and the two refusal paths in `_identity_of`, but nothing has been agreed.]`
+| `LG-01` | The shim binds through `make_logger` and a call returns `None` without raising | `test_the_log_shim_binds_and_a_call_returns_none` |
 
 ## Identity — `ArchivableBaseMixin`
 

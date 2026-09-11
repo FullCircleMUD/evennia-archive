@@ -126,7 +126,7 @@ evennia-archive/
 │       ├── config.py          # every constant, and check_settings()
 │       ├── db_router.py       # ArchiveRouter
 │       ├── lockfuncs.py       # owns_character()
-│       ├── log.py             # the logging shim
+│       ├── log.py             # binds archive_log via evennia-logging-extension → archive.log
 │       ├── migrations/        # ArchiveRecord's schema
 │       ├── mixins.py          # the archivable mixins
 │       ├── models.py          # ArchiveRecord
@@ -137,6 +137,7 @@ evennia-archive/
 ## Tools and environment
 
 - Python 3.10+ (pinned via `pyproject.toml`).
-- Evennia is the only runtime dependency.
+- Runtime dependencies: Evennia and `evennia-logging-extension`. The extension is not published, so
+  a dev venv installs it from its checkout: `pip install -e ../evennia-logging-extension`.
 - Tests run through Django's test runner via `python runtests.py` — not pytest.
 - Development uses a dedicated venv at `venv/` (gitignored), independent of any consumer game.

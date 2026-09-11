@@ -3,6 +3,14 @@
 Reverse-chronological milestone log. Newest first. Each entry states what became true and what proves
 it.
 
+## 2026-09-11 — Logging binds through evennia-logging-extension
+
+**`log.py` is the standard three-line binding**: `archive_log = make_logger("archive.log")`, with
+`evennia-logging-extension` a declared dependency. The extension owns delivery, levels and trace
+handling — and tests them — so the six cases that covered the hand-rolled shim's mechanism are
+retired; `LG-01` proves the binding, and the `LO` cases cover the call sites unchanged. The extension
+is not on PyPI, so both dev venvs and the demo's requirements install it from the sibling checkout.
+
 ## 2026-09-08 — Refusing a settings module it cannot work with
 
 156 tests.

@@ -25,4 +25,5 @@
 #     ../venv/bin/pip install -e ../..
 
 evennia
+-e ../../../evennia-logging-extension
 -e ../..

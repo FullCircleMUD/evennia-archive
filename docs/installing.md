@@ -52,6 +52,13 @@ library validates rather than one it invents.
 pip install evennia-archive
 ```
 
+The library logs through `evennia-logging-extension`, which is not on PyPI yet — install it from its
+checkout alongside:
+
+```
+pip install -e path/to/evennia-logging-extension
+```
+
 ## 2. Add the app
 
 ```python

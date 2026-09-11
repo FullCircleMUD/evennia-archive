@@ -26,6 +26,7 @@ classifiers = [
 ]
 dependencies = [
     "evennia",
+    "evennia-logging-extension",
 ]
 
 [project.optional-dependencies]
