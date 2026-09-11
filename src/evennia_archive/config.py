@@ -112,8 +112,16 @@ def check_settings() -> None:
         )
 
     if problems:
-        raise ImproperlyConfigured(
+        message = (
             "evennia-archive cannot start:"
             + PROBLEM_PREFIX
             + PROBLEM_PREFIX.join(problems)
         )
+        # Logged before the raise, same text in both channels: the raise
+        # happens during django.setup() where it can drown in startup noise,
+        # and archive.log is where an operator looks for this library's
+        # failures. Imported lazily — the module-scope form is a cycle.
+        from .log import archive_log
+
+        archive_log(message, level="ERROR")
+        raise ImproperlyConfigured(message)

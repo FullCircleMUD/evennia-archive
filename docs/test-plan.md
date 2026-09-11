@@ -71,6 +71,12 @@ Not checked, and stated in `installing.md` under *what is not checked for you*: 
 because `AppConfig.ready()` never runs without it, and whether the archive has been migrated, because
 that needs a database query inside `ready()`.
 
+A refusal is also logged, at ERROR, before the raise. The raise happens during `django.setup()`, in
+every process, where it can drown in startup noise — `archive.log` is where an operator looks for the
+library's failures, so the refusal lands there too, carrying the same text as the exception. `CS-09`
+and `CS-10` assert delivery by reading the file back, never by mocking the shim — a mocked call
+passes whether or not a line lands.
+
 | ID | Case | Test function |
 |---|---|---|
 | CS-01 | A complete settings module passes — `check_settings()` returns without raising | `TestCheckSettings.test_complete_settings_pass` |
@@ -80,6 +86,8 @@ that needs a database query inside `ready()`.
 | CS-05 | Two faults produce one exception naming both. A consumer gets the whole list or a clean start, never one restart per mistake | `TestCheckSettings.test_every_problem_in_one_raise` |
 | CS-06 | A `DATABASES` that is missing entirely does not mask the lock-function check — the clause that follows a rejected value still runs and still reports | `TestCheckSettings.test_a_rejected_value_does_not_stop_later_clauses` |
 | CS-07 | `AppConfig.ready()` calls `check_settings()`, so the refusal happens at boot rather than at first use | `TestCheckSettings.test_ready_calls_check_settings` |
+| CS-09 | A boot refusal is logged to disk at ERROR before the raise — asserted by reading the file back, never by mocking the shim | `TestCheckSettings.test_a_refusal_is_logged_to_disk_at_error` |
+| CS-10 | The log line and the exception carry the same text — one message, built once, sent to both channels | `TestCheckSettings.test_the_log_line_and_the_exception_carry_the_same_text` |
 
 ## `config.py`
 

@@ -3,6 +3,7 @@
 
 Run via ``python runtests.py`` from the library root.
 """
+import os
 import uuid
 from unittest import TestCase as PlainTestCase
 from unittest import mock
@@ -1905,6 +1906,63 @@ class TestCheckSettings(PlainTestCase):
         with mock.patch("evennia_archive.config.check_settings") as checked:
             EvenniaArchiveConfig.ready(mock.Mock())
         checked.assert_called_once()
+
+    # CS-09 / CS-10 assert delivery by reading LOG_DIR back — a mocked shim
+    # passes whether or not a line ever reached a file. See the CS notes in
+    # docs/test-plan.md.
+
+    def _read_back_logs(self):
+        """Everything under the suite's LOG_DIR, as one string."""
+        text = []
+        for name in sorted(os.listdir(settings.LOG_DIR)):
+            if name.endswith(".log"):
+                path = os.path.join(settings.LOG_DIR, name)
+                with open(path, encoding="utf-8") as handle:
+                    text.append(handle.read())
+        return "\n".join(text)
+
+    def _clear_logs(self):
+        """Point Evennia's writer at the suite's LOG_DIR and empty it.
+
+        The log directory is latched module-globally at the first-ever
+        write. In the full suite that write happens inside Evennia's test
+        scaffolding, under settings whose LOG_DIR is the game template in
+        site-packages — so every later line lands there and a read-back
+        here finds nothing. Re-pointing the latch and dropping the cached
+        handles makes delivery land where these settings say.
+
+        Files are truncated, never removed: a removed file would leave a
+        cached handle writing to an unlinked inode, and every later line
+        would silently vanish.
+        """
+        from evennia.utils import logger as evennia_logger
+
+        evennia_logger._LOGDIR = settings.LOG_DIR
+        for handle in evennia_logger._LOG_FILE_HANDLES.values():
+            handle.close()
+        evennia_logger._LOG_FILE_HANDLES.clear()
+        evennia_logger._LOG_FILE_HANDLE_COUNTS.clear()
+
+        for name in os.listdir(settings.LOG_DIR):
+            if name.endswith(".log"):
+                with open(os.path.join(settings.LOG_DIR, name), "w"):
+                    pass
+
+    def test_a_refusal_is_logged_to_disk_at_error(self):
+        """CS-09"""
+        self._clear_logs()
+        with self.assertRaises(ImproperlyConfigured):
+            self.check(DATABASES={"default": _VALID_DATABASES["default"]})
+        logged = self._read_back_logs()
+        self.assertIn("[ERROR]", logged)
+        self.assertIn("DATABASES", logged)
+
+    def test_the_log_line_and_the_exception_carry_the_same_text(self):
+        """CS-10"""
+        self._clear_logs()
+        with self.assertRaises(ImproperlyConfigured) as caught:
+            self.check(DATABASES={"default": _VALID_DATABASES["default"]})
+        self.assertIn(str(caught.exception), self._read_back_logs())
 
 
 # --- CT: config.py -----------------------------------------------------------
