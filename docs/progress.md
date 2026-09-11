@@ -3,6 +3,16 @@
 Reverse-chronological milestone log. Newest first. Each entry states what became true and what proves
 it.
 
+## 2026-09-11 — Every refusal logs before it raises
+
+**Six sites, one shape**: message built once, `archive_log(message, level="ERROR")`, then the raise
+— so the log line and the exception always carry the same text. The three `archive()` refusals (no
+mixin, no identity, character with no owner), both `restore()` refusals (unknown identity, record
+pointing at a missing row) and the mid-flight rename exhaustion. `check_settings()` got the same
+treatment earlier (`CS-09`/`CS-10`); `LO-13` to `LO-18` cover these, all asserted by reading the
+file back. The deliberate silences — `owns_character()`, the find functions' bad-argument raises,
+the mixin markers, no startup line — are recorded in the test plan so they do not read as gaps.
+
 ## 2026-09-11 — First consumer of evennia-database-cascade
 
 **The alias is declared, not hand-rolled.** `db_spec.py` carries the `AliasSpec` — alias `archive`,

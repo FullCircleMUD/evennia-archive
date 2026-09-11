@@ -86,20 +86,27 @@ def _identity_of(obj):
     # The base, so every kind-specific child qualifies. Testing one of the
     # children instead would refuse the other two.
     if not isinstance(obj, ArchivableBaseMixin):
-        raise NotArchivable(
+        # Logged before the raise, same text in both channels: this fires
+        # inside creation hooks, where the consumer or Evennia may swallow
+        # the raise — and archive.log is where an operator looks.
+        message = (
             f"{obj!r} carries no archivable mixin. Identity has to come from "
             "one, because it mints a uuid4 once and never reissues it — that "
             "is what makes archive_id safe to match rows on. Add "
             "ArchivableObjectMixin, ArchivableCharacterMixin or "
             "ArchivableAccountMixin to its typeclass."
         )
+        archive_log(message, level="ERROR")
+        raise NotArchivable(message)
     archive_id = obj.archive_id
     if not archive_id:
-        raise NotArchivable(
+        message = (
             f"{obj!r} carries an archivable mixin but has no archive_id yet. "
             "Call at_archive_init() on it — objects created before the mixin "
             "was added need it once, and it never overwrites."
         )
+        archive_log(message, level="ERROR")
+        raise NotArchivable(message)
     return archive_id
 
 
@@ -254,12 +261,14 @@ def archive(obj):
     # there is no account reference to test. This is the first point that
     # can, and the first that has cause to.
     if isinstance(obj, ArchivableCharacterMixin) and not obj.owner_account_archive_id:
-        raise NotArchivable(
+        message = (
             f"{obj!r} carries ArchivableCharacterMixin but names no owner "
             "account. That mixin is for player characters, which an account "
             "creates and stamps. Use ArchivableObjectMixin for an NPC, a mob, "
             "or anything else no account owns."
         )
+        archive_log(message, level="ERROR")
+        raise NotArchivable(message)
 
     db_model = obj.__dbclass__
     model_name = db_model.__name__.lower()
@@ -382,10 +391,14 @@ def _free_the_unique_values(db_model, values):
                 values[field] = candidate
                 break
         else:
-            raise RuntimeError(
+            # The restore was accepted and died mid-flight — exactly when
+            # a trace matters. Logged before the raise, same text.
+            message = (
                 f"no free {field} based on {original!r} after "
                 f"{MAX_RENAME_ATTEMPTS} attempts"
             )
+            archive_log(message, level="ERROR")
+            raise RuntimeError(message)
         field, value = _conflicting_field(db_model, values)
 
     return renamed
@@ -469,15 +482,25 @@ def restore(archive_id, return_object=True):
     archive_id = str(archive_id)
     record = ArchiveRecord.objects.using(ARCHIVE_ALIAS).filter(pk=archive_id).first()
     if record is None:
-        raise NotArchived(f"nothing archived under {archive_id!r}")
+        # Logged before the raise, same text in both channels: a bulk
+        # restore catching per-id failures would otherwise leave no trace
+        # of which ids failed.
+        message = f"nothing archived under {archive_id!r}"
+        archive_log(message, level="ERROR")
+        raise NotArchived(message)
 
     db_model = _model_named(record.archived_model)
     values = _archived_values(db_model, record.archived_pk)
     if values is None:
-        raise NotArchived(
+        # The archive contradicting itself — a record with no row behind
+        # it. Logged before the raise, same text in both channels: this is
+        # the finding an operator must never miss.
+        message = (
             f"{archive_id!r} points at {record.archived_model} row "
             f"{record.archived_pk}, which is not in the archive"
         )
+        archive_log(message, level="ERROR")
+        raise NotArchived(message)
 
     existing_pk = _live_pk_for(db_model, archive_id)
     if existing_pk is not None:

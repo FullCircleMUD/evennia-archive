@@ -129,7 +129,7 @@ nobody would otherwise see — so the negative cases below are as load-bearing a
 log an operator has learned to scroll past is worse than no log, and the ordinary operations here run
 at every character creation and every scheduled sweep.
 
-Four sites, all silent today:
+Four sites that would otherwise be silent:
 
 - **`archive()` rewriting a record whose row is gone.** A self-heal. It costs nothing and turns a hard
   failure into a repair, which is why it is right — and why nothing currently says it happened.
@@ -143,6 +143,26 @@ Four sites, all silent today:
 
 Successful `archive()` calls are deliberately not logged: the hook fires at every character creation,
 and the volume would bury the four above.
+
+**A refusal logs at ERROR before its raise, carrying the same text.** `archive()`'s refusals fire
+inside creation hooks, where the consumer or Evennia may swallow the raise — a failed chargen with
+nothing in `archive.log` is the invisible failure. `restore()`'s refusals and the mid-flight rename
+exhaustion get the same treatment: a bulk restore catching per-id failures would otherwise leave no
+trace. Asserted by reading the file back, never by mocking the shim. `LO-13` to `LO-18` are the six
+sites.
+
+**Silent on purpose** — surveyed 2026-09-11 and ruled out, so they do not read as gaps:
+
+- `owns_character()` returning False. Routine, not anomalous: the lockstring is
+  `owns_character() or perm(Developer)`, so every admin access legitimately evaluates it False on
+  every check. The real failure behind it — a missing `LOCK_FUNC_MODULES` registration — is refused
+  and logged at boot.
+- The find functions' bad-argument raises (`_model_named`'s `LookupError`, `_concrete_field`'s
+  `FieldDoesNotExist`). Programming errors whose exception message reaches whoever typed the
+  argument, with nothing left to troubleshoot later.
+- The mixin base-class `NotImplementedError` markers — subclass-responsibility stubs, loud by design.
+- No startup line. `evennia-database-cascade` already logs `configured aliases: …` and its refusals
+  on every boot, so an archive line would duplicate what is on disk.
 
 | ID | Case | Test function |
 |---|---|---|
@@ -158,6 +178,12 @@ and the volume would bury the four above.
 | `LO-10` | A restore that returned an object already live logs nothing — nothing was rebuilt | `TestArchiveLogging.test_an_idempotent_restore_logs_nothing` |
 | `LO-11` | A successful `delete()` logs an `INFO` naming the identity it destroyed | `TestArchiveLogging.test_a_successful_delete_logs_an_info` |
 | `LO-12` | `delete()` finding nothing to remove logs nothing. That is its documented normal case, and the reason the other path is worth a line | `TestArchiveLogging.test_deleting_nothing_logs_nothing` |
+| `LO-13` | `archive()` refused for an object with no archivable mixin logs an `ERROR` before the raise, carrying the exception's own text — read back from disk | `TestArchiveLogging.test_a_refusal_for_lack_of_a_mixin_logs_an_error` |
+| `LO-14` | `archive()` refused for an object carrying a mixin but no identity — created before the mixin, `at_archive_init()` never run — logs an `ERROR` before the raise, carrying the exception's own text | `TestArchiveLogging.test_a_refusal_for_a_missing_identity_logs_an_error` |
+| `LO-15` | `archive()` refused for a character-mixin object naming no owner — an NPC or mob wearing the player-character mixin — logs an `ERROR` before the raise, carrying the exception's own text | `TestArchiveLogging.test_a_refusal_for_a_missing_owner_logs_an_error` |
+| `LO-16` | `restore()` refused for an identity the archive holds no record of logs an `ERROR` before the raise — a bulk-restore script catching per-id failures would otherwise leave no trace of which ids failed | `TestArchiveLogging.test_a_restore_of_an_unknown_identity_logs_an_error` |
+| `LO-17` | `restore()` refused for a record pointing at a missing archived row logs an `ERROR` before the raise — the archive contradicting itself, the finding an operator must never miss | `TestArchiveLogging.test_a_restore_of_a_dangling_record_logs_an_error` |
+| `LO-18` | Rename exhaustion — no free unique value after `MAX_RENAME_ATTEMPTS` — logs an `ERROR` before the raise. Not a refusal: the restore was accepted and died mid-flight, which is exactly when a trace matters | `TestArchiveLogging.test_rename_exhaustion_logs_an_error` |
 
 `LO-09` and `LO-11` are the two operations worth a record beyond the four above.
 

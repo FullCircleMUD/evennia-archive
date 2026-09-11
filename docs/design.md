@@ -178,28 +178,20 @@ rebuild it exists to help recover from.
 
 ## The router
 
-The library's table is why a router exists at all. Without a table of its own there would be nothing
+The library's table is why routing exists at all. Without a table of its own there would be nothing
 to route, and the archive would work with no router declared.
 
-It follows the shape already established in FCM's `xrpl` and `ai_memory` routers, with two
-differences that matter:
+The router itself is not this library's to write. `db_spec.py` declares the alias to
+`evennia-database-cascade`, and the cascade derives the router — and the migration list — from the
+same declaration, so routing and migration cannot disagree. Two facts the spec carries matter here:
 
-- **Two attributes, not one.** Those routers use a single `app_label` that doubles as the alias name.
-  Here the app is `evennia_archive` and the alias is `archive`, so they must be separate — conflating
-  them routes the library's own models to an alias that does not exist.
-- **`exclusive = False`.** Those routers carry a clause meaning *"nothing but my models may enter my
-  database"*. Inverted here: Evennia's models are precisely what belongs in the archive. Copying that
-  clause would make the router refuse the thing the archive is for.
+- **The app is `evennia_archive` and the alias is `archive`** — two names, deliberately separate;
+  conflating them would route the library's own models to an alias that does not exist.
+- **Evennia's models are precisely what belongs in the archive database.** The spec says so with
+  `allow_foreign_tables_in_own_db=True`, where most libraries keep foreign tables out — a clause
+  meaning "nothing but my models may enter my database" would refuse the thing the archive is for.
 
-Everything else transfers unchanged — including returning `None` to defer, which is what lets it
-coexist with a consumer's own routers rather than fighting them.
-
-**The consumer declares the router**, alongside the app and the alias. The library does not reach
-into their settings to append it. `evennia-shards` does inject settings from `AppConfig.ready()`, but
-`DATABASE_ROUTERS` is the wrong setting to do it to: `django.db.router.routers` is a
-`cached_property`, so anything that touches the ORM before `ready()` runs snapshots the list without
-us in it and the router silently never applies. A visible line in the consumer's settings cannot fail
-that way. See [installing.md](installing.md).
+See [installing.md](installing.md).
 
 ## Identity
 

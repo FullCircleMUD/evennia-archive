@@ -139,6 +139,50 @@ class LayeredTestObject(ArchivableObjectMixin, MarkerMixin, DefaultObject):
     """`OM-04` — the marker must not be skipped on the way to Evennia."""
 
 
+def _read_back_logs():
+    """Everything under the suite's LOG_DIR, as one string.
+
+    Delivery is asserted by reading the file back — a mocked shim passes
+    whether or not a line ever reached a file. Shared by every class with
+    read-back cases (`CS`, `LO`).
+    """
+    text = []
+    for name in sorted(os.listdir(settings.LOG_DIR)):
+        if name.endswith(".log"):
+            path = os.path.join(settings.LOG_DIR, name)
+            with open(path, encoding="utf-8") as handle:
+                text.append(handle.read())
+    return "\n".join(text)
+
+
+def _clear_logs():
+    """Point Evennia's writer at the suite's LOG_DIR and empty it.
+
+    The log directory is latched module-globally at the first-ever write.
+    In the full suite that write happens inside Evennia's test scaffolding,
+    under settings whose LOG_DIR is the game template in site-packages — so
+    every later line lands there and a read-back here finds nothing.
+    Re-pointing the latch and dropping the cached handles makes delivery
+    land where these settings say.
+
+    Files are truncated, never removed: a removed file would leave a cached
+    handle writing to an unlinked inode, and every later line would
+    silently vanish.
+    """
+    from evennia.utils import logger as evennia_logger
+
+    evennia_logger._LOGDIR = settings.LOG_DIR
+    for handle in evennia_logger._LOG_FILE_HANDLES.values():
+        handle.close()
+    evennia_logger._LOG_FILE_HANDLES.clear()
+    evennia_logger._LOG_FILE_HANDLE_COUNTS.clear()
+
+    for name in os.listdir(settings.LOG_DIR):
+        if name.endswith(".log"):
+            with open(os.path.join(settings.LOG_DIR, name), "w"):
+                pass
+
+
 class TestPackageInstalls(PlainTestCase):
     """Smoke test: the package imports and Django loads it as an app."""
 
@@ -1911,58 +1955,21 @@ class TestCheckSettings(PlainTestCase):
     # passes whether or not a line ever reached a file. See the CS notes in
     # docs/test-plan.md.
 
-    def _read_back_logs(self):
-        """Everything under the suite's LOG_DIR, as one string."""
-        text = []
-        for name in sorted(os.listdir(settings.LOG_DIR)):
-            if name.endswith(".log"):
-                path = os.path.join(settings.LOG_DIR, name)
-                with open(path, encoding="utf-8") as handle:
-                    text.append(handle.read())
-        return "\n".join(text)
-
-    def _clear_logs(self):
-        """Point Evennia's writer at the suite's LOG_DIR and empty it.
-
-        The log directory is latched module-globally at the first-ever
-        write. In the full suite that write happens inside Evennia's test
-        scaffolding, under settings whose LOG_DIR is the game template in
-        site-packages — so every later line lands there and a read-back
-        here finds nothing. Re-pointing the latch and dropping the cached
-        handles makes delivery land where these settings say.
-
-        Files are truncated, never removed: a removed file would leave a
-        cached handle writing to an unlinked inode, and every later line
-        would silently vanish.
-        """
-        from evennia.utils import logger as evennia_logger
-
-        evennia_logger._LOGDIR = settings.LOG_DIR
-        for handle in evennia_logger._LOG_FILE_HANDLES.values():
-            handle.close()
-        evennia_logger._LOG_FILE_HANDLES.clear()
-        evennia_logger._LOG_FILE_HANDLE_COUNTS.clear()
-
-        for name in os.listdir(settings.LOG_DIR):
-            if name.endswith(".log"):
-                with open(os.path.join(settings.LOG_DIR, name), "w"):
-                    pass
-
     def test_a_refusal_is_logged_to_disk_at_error(self):
         """CS-09"""
-        self._clear_logs()
+        _clear_logs()
         with self.assertRaises(ImproperlyConfigured):
             self.check(DATABASES={"default": _VALID_DATABASES["default"]})
-        logged = self._read_back_logs()
+        logged = _read_back_logs()
         self.assertIn("[ERROR]", logged)
         self.assertIn("DATABASES", logged)
 
     def test_the_log_line_and_the_exception_carry_the_same_text(self):
         """CS-10"""
-        self._clear_logs()
+        _clear_logs()
         with self.assertRaises(ImproperlyConfigured) as caught:
             self.check(DATABASES={"default": _VALID_DATABASES["default"]})
-        self.assertIn(str(caught.exception), self._read_back_logs())
+        self.assertIn(str(caught.exception), _read_back_logs())
 
 
 # --- DS: the database spec ---------------------------------------------------
@@ -2049,7 +2056,7 @@ class TestConfigConstants(BaseEvenniaTest):
 
 # --- LO: what the library logs ----------------------------------------------
 class TestArchiveLogging(BaseEvenniaTest):
-    """The call sites — `LO-01` to `LO-08`.
+    """The call sites — `LO-01` to `LO-13`.
 
     The negative cases carry as much weight as the positive ones. Each site
     sits on a path that also runs constantly, so without them nothing stops a
@@ -2216,3 +2223,76 @@ class TestArchiveLogging(BaseEvenniaTest):
             self.assertFalse(delete(str(uuid.uuid4())))
 
         logged.assert_not_called()
+
+    def test_a_refusal_for_lack_of_a_mixin_logs_an_error(self):
+        """LO-13"""
+        _clear_logs()
+        obj = create_object(DefaultObject, key="mixinless")
+        with self.assertRaises(NotArchivable) as caught:
+            archive(obj)
+        logged = _read_back_logs()
+        self.assertIn("[ERROR]", logged)
+        self.assertIn(str(caught.exception), logged)
+
+    def test_a_refusal_for_a_missing_identity_logs_an_error(self):
+        """LO-14"""
+        _clear_logs()
+        obj = create_object(ArchivableTestObject, key="uninitialised")
+        obj.attributes.remove(ARCHIVE_ID_KEY)
+        with self.assertRaises(NotArchivable) as caught:
+            archive(obj)
+        logged = _read_back_logs()
+        self.assertIn("[ERROR]", logged)
+        self.assertIn(str(caught.exception), logged)
+
+    def test_a_refusal_for_a_missing_owner_logs_an_error(self):
+        """LO-15"""
+        _clear_logs()
+        npc = create_object(ArchivableTestCharacter, key="unowned npc")
+        with self.assertRaises(NotArchivable) as caught:
+            archive(npc)
+        logged = _read_back_logs()
+        self.assertIn("[ERROR]", logged)
+        self.assertIn(str(caught.exception), logged)
+
+    def test_a_restore_of_an_unknown_identity_logs_an_error(self):
+        """LO-16"""
+        _clear_logs()
+        with self.assertRaises(NotArchived) as caught:
+            restore(str(uuid.uuid4()))
+        logged = _read_back_logs()
+        self.assertIn("[ERROR]", logged)
+        self.assertIn(str(caught.exception), logged)
+
+    def test_rename_exhaustion_logs_an_error(self):
+        """LO-18"""
+        from evennia_archive.api import _free_the_unique_values
+
+        for key in ("rowan", "rowan1", "rowan2"):
+            self._account(key)
+        _clear_logs()
+        with mock.patch("evennia_archive.api.MAX_RENAME_ATTEMPTS", 2):
+            with self.assertRaises(RuntimeError) as caught:
+                _free_the_unique_values(AccountDB, {"username": "rowan"})
+        logged = _read_back_logs()
+        self.assertIn("[ERROR]", logged)
+        self.assertIn(str(caught.exception), logged)
+
+    def test_a_restore_of_a_dangling_record_logs_an_error(self):
+        """LO-17"""
+        obj = create_object(ArchivableTestObject, key="dangling")
+        record = archive(obj)
+        # Leave the record pointing at nothing, as LO-01 does. The
+        # attributes and tag links go first — dropping the row alone
+        # orphans them, and SQLite's foreign key check catches it at
+        # teardown.
+        _purge_attributes(ObjectDB, "archive", record.archived_pk)
+        _purge_tag_links(ObjectDB, record.archived_pk)
+        ObjectDB.objects.using("archive").filter(pk=record.archived_pk)._raw_delete("archive")
+
+        _clear_logs()
+        with self.assertRaises(NotArchived) as caught:
+            restore(obj.archive_id)
+        logged = _read_back_logs()
+        self.assertIn("[ERROR]", logged)
+        self.assertIn(str(caught.exception), logged)

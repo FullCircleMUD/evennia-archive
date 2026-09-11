@@ -64,10 +64,10 @@ pip install -e .
 python runtests.py
 ```
 
-Installing the package is not enough on its own — a consumer declares the app, a second database
-alias and a router in their own settings. **See [docs/installing.md](https://github.com/FullCircleMUD/evennia-archive/blob/main/docs/installing.md)
-for what to add**, including the one entry that will silently break a game that already has database
-routers.
+Installing the package is not enough on its own — a consumer adds the apps, one
+`evennia-database-cascade` settings call that places the archive database, and a lock-function
+entry. **See [docs/installing.md](https://github.com/FullCircleMUD/evennia-archive/blob/main/docs/installing.md)
+for what to add.**
 
 ## Learn more
 
