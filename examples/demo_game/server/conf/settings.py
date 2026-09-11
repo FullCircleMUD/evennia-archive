@@ -44,25 +44,22 @@ SERVERNAME = "demo_game"
 
 import os
 
-# 1. The app
-INSTALLED_APPS += ["evennia_archive"]
+# 2. The apps — the library, and the cascade that places its database
+INSTALLED_APPS += ["evennia_archive", "evennia_database_cascade"]
 
 # Everything created in this demo should be archivable, so the base
 # typeclasses are the ones carrying an archivable mixin.
 BASE_CHARACTER_TYPECLASS = "typeclasses.characters.ArchivableCharacter"
 BASE_ACCOUNT_TYPECLASS = "typeclasses.accounts.ArchivableAccount"
 
-# 2. The archive database — a second Evennia schema, never run as a game
-DATABASES["archive"] = {
-    "ENGINE": "django.db.backends.sqlite3",
-    "NAME": os.path.join(GAME_DIR, "server", "archive.db3"),
-}
+# 3. The archive database — resolved by the cascade from the library's own
+# spec. With no DATABASE_URL_ARCHIVE set it lands in server/archive.db3;
+# a second Evennia schema, never run as a game.
+from evennia_database_cascade import configure
 
-# 3. The router — append, never assign.
-_ARCHIVE_ROUTER = "evennia_archive.db_router.ArchiveRouter"
-DATABASE_ROUTERS = list(globals().get("DATABASE_ROUTERS", []))
-if _ARCHIVE_ROUTER not in DATABASE_ROUTERS:
-    DATABASE_ROUTERS.append(_ARCHIVE_ROUTER)
+DATABASES, DATABASE_ROUTERS = configure(
+    DATABASES, INSTALLED_APPS, GAME_DIR, os.environ
+)
 
 # 4. The lock function. ArchivableAccountMixin writes owns_character() into
 # a character's ownership locks; without this the clause cannot resolve and

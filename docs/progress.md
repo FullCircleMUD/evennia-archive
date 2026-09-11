@@ -3,6 +3,17 @@
 Reverse-chronological milestone log. Newest first. Each entry states what became true and what proves
 it.
 
+## 2026-09-11 — First consumer of evennia-database-cascade
+
+**The alias is declared, not hand-rolled.** `db_spec.py` carries the `AliasSpec` — alias `archive`,
+no sharing the common URL, foreign tables welcome in its own database — and the cascade derives the
+`DATABASES` entry, the router and the migration list from it. `db_router.py` is deleted; `CT-01`
+retires with it and `DS-01`–`DS-04` cover the spec, including one integration case proving
+`configure()` discovers, resolves and routes from this library's side. `check_settings()` is
+deliberately unchanged: belt and braces over the cascade, and the one case the cascade cannot see —
+`DATABASE_URL_ARCHIVE` pointed at the game's own database — is caught only here. The suite's own
+settings now call `configure()`, so every run exercises the real consumer path.
+
 ## 2026-09-11 — Logging binds through evennia-logging-extension
 
 **`log.py` is the standard three-line binding**: `archive_log = make_logger("archive.log")`, with

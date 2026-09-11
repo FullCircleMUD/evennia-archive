@@ -26,6 +26,7 @@ classifiers = [
 ]
 dependencies = [
     "evennia",
+    "evennia-database-cascade",
     "evennia-logging-extension",
 ]
 

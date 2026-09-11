@@ -1,8 +1,7 @@
 # Installing
 
-What a consumer does to install this library — four settings entries and one change to their
-typeclasses — why each is needed, and the one entry that will silently break an existing game if it
-is copied carelessly.
+What a consumer does to install this library — the apps, one database call, one lock-function entry
+and one change to their typeclasses — and why each is needed.
 
 Everything here is built and tested. The demo gamedir under `examples/` uses this document verbatim,
 so these instructions are what gets exercised rather than a paraphrase of them.
@@ -20,24 +19,23 @@ its own copy of those tables — it gets the game's. `archive()` then writes int
 looking like it is archiving, and the world rebuild this library exists to survive destroys the
 archive along with everything else.
 
-If you resolve database connections from environment variables — a per-alias URL, then a shared one,
-then a local file — **the archive cannot use the shared rung.** Give it its own URL or its own file.
+The library declares that constraint to `evennia-database-cascade`, which places the alias: the
+shared `DATABASE_URL` rung is refused for it, so the archive lands on its own
+`DATABASE_URL_ARCHIVE` database or its own local `archive.db3` file, never the game's.
 
-The library refuses to start when the two resolve to the same database, so this fails loudly at boot
-rather than quietly at the first restore. The check compares engine, name, host and port; two entries
-that reach one database under different hostnames would pass it, so the constraint is yours to hold
-as well.
+The library also refuses to start when the archive and the game resolve to the same database — a
+hand-written entry can reach what the cascade would have refused. The check compares engine, name,
+host and port; two entries that reach one database under different hostnames would pass it, so the
+constraint is yours to hold as well.
 
 ## Required settings
 
-Four entries, all in the consumer's `server/conf/settings.py`. Two of them the library refuses to
-start without.
+All in the consumer's `server/conf/settings.py`. Two of them the library refuses to start without.
 
 | Setting | What it does | Without it |
 |---|---|---|
-| `INSTALLED_APPS` += `"evennia_archive"` | Loads the app, its model and its `ready()` hook | Nothing runs — including the boot check, which is why this one cannot be validated |
-| `DATABASES["archive"]` | The second Evennia schema. Must be a different database from `default` | **Refused at boot.** Without it every call raises `ConnectionDoesNotExist` at first use |
-| `DATABASE_ROUTERS` += `ArchiveRouter` | Keeps `evennia_archive`'s own table out of the game database at migrate time | A stray `evennia_archive_archiverecord` in the game database. Not checked — see below |
+| `INSTALLED_APPS` += the two apps | Loads the library and the cascade that places its database | Nothing runs — including the boot check, which is why this one cannot be validated |
+| The cascade's `configure()` call | Resolves the `archive` alias and its router from this library's own spec | **Refused at boot.** No `archive` entry means every call would raise `ConnectionDoesNotExist` at first use |
 | `LOCK_FUNC_MODULES` += `"evennia_archive.lockfuncs"` | Registers `owns_character()`, which the mixin writes into every character's locks | **Refused at boot.** The clause cannot resolve, so every ownership check evaluates false and an account is refused its own character |
 
 ## Optional settings
@@ -52,44 +50,34 @@ library validates rather than one it invents.
 pip install evennia-archive
 ```
 
-The library logs through `evennia-logging-extension`, which is not on PyPI yet — install it from its
-checkout alongside:
+The library logs through `evennia-logging-extension` and declares its database to
+`evennia-database-cascade`; neither is on PyPI yet, so install both from their checkouts alongside:
 
 ```
 pip install -e path/to/evennia-logging-extension
+pip install -e path/to/evennia-database-cascade
 ```
 
-## 2. Add the app
+## 2. Add the apps
 
 ```python
-INSTALLED_APPS += ["evennia_archive"]
+INSTALLED_APPS += ["evennia_archive", "evennia_database_cascade"]
 ```
 
-## 3. Declare the archive database
+Both: the library, and the cascade whose boot check verifies the alias it placed.
 
-```python
-DATABASES["archive"] = {
-    "ENGINE": "django.db.backends.sqlite3",
-    "NAME": os.path.join(GAME_DIR, "server", "archive.db3"),
-}
-```
+## 3. Let the cascade place the database
 
-Read the section above this one first if you have not. This entry must name a **different database**
-from `default`, and the library refuses to start if it does not.
+This library ships its declaration — the alias, its SQLite fallback `archive.db3`, and the
+schema-clone constraint above. What remains for you is the cascade's one settings call and, per
+deployment, an environment variable saying where the archive lives. Follow
+[evennia-database-cascade's installing.md](../../evennia-database-cascade/docs/installing.md)
+from step 4; nothing in it is archive-specific beyond one fact:
 
-## 4. Add the router
+**The archive refuses the shared rung.** `DATABASE_URL` alone is an error for this alias — give it
+`DATABASE_URL_ARCHIVE`, or set nothing and it lands in `server/archive.db3`.
 
-```python
-_ARCHIVE_ROUTER = "evennia_archive.db_router.ArchiveRouter"
-DATABASE_ROUTERS = list(globals().get("DATABASE_ROUTERS", []))
-if _ARCHIVE_ROUTER not in DATABASE_ROUTERS:
-    DATABASE_ROUTERS.append(_ARCHIVE_ROUTER)
-```
-
-Append, never assign — see *Why the router list is appended* below. The router is a dotted-path
-string, exactly like an app entry; the class ships with the library and a consumer never writes one.
-
-## 5. Register the lock function
+## 4. Register the lock function
 
 ```python
 LOCK_FUNC_MODULES = list(LOCK_FUNC_MODULES) + ["evennia_archive.lockfuncs"]
@@ -106,7 +94,7 @@ Without this line the clause cannot resolve and evaluates false, so every owners
 That is the direction a missing registration should fail in, but it looks identical to a permissions
 problem, so it is worth checking first if an account cannot puppet a character it owns.
 
-## 6. Mix into your typeclasses
+## 5. Mix into your typeclasses
 
 Settings alone archive nothing. **The library only archives objects whose typeclass carries one of
 its mixins**, so mixing one in is how a consumer says which of their objects matter. Pick the one
@@ -160,16 +148,18 @@ and the ownership locks are written at character creation too, so a character th
 `at_post_create_character(character)` on it — which is also what a game with its own chargen calls,
 if it builds characters without going through `create_character`.
 
-## 7. Migrate both databases
+## 6. Migrate both databases
 
 The archive is a **schema clone**: the same Evennia migrations, applied to a second database.
 
 ```
-evennia migrate                      # the game, as normal
-evennia migrate --database archive   # the archive
+evennia cascade_migrate
 ```
 
-Both are needed. The second is not optional and not implied by the first.
+One command: it runs the bare `migrate` for the game, then `migrate --database archive` — and the
+same for any other cascade-placed alias you have installed. The two-step form
+(`evennia migrate`, then `evennia migrate --database archive`) does the same by hand. Both steps are
+needed; the second is not optional and not implied by the first.
 
 **Verified behaviour** (Evennia 6.1.0, SQLite, `examples/demo_game`):
 
@@ -189,51 +179,17 @@ a database that is migrated but never started stays empty by construction.
 That is also why **the archive must never be run as a game**. Start a server against it once and
 Evennia will populate it.
 
-## Why the router list is appended, never assigned
-
-Evennia does not define `DATABASE_ROUTERS` at all, so a game with no routers of its own could get
-away with a plain assignment. **A game that already has routers cannot.**
-
-The failure is silent and expensive. A consumer with existing routers who writes
-`DATABASE_ROUTERS = ["evennia_archive.db_router.ArchiveRouter"]` replaces their list rather than
-extending it. Every model those routers were steering now falls back to `default` — no exception, no
-warning, just reads and writes landing in the wrong database until someone notices the data isn't
-there.
-
-The membership check also makes the block idempotent, so a settings module imported twice cannot
-stack duplicate routers.
-
-## Why the consumer declares the router rather than the library injecting it
-
-`evennia-shards` appends its own middleware and portal plugins from `AppConfig.ready()`, so the
-technique is proven in a sibling. `DATABASE_ROUTERS` is the wrong setting to use it on.
-
-`django.db.router.routers` is a `cached_property`. Anything that touches the ORM before our
-`ready()` runs snapshots the router list without us in it, and the router then silently never
-applies — no error, no warning, tables quietly landing in the wrong database. Middleware does not
-have that problem because Django assembles that chain at first request, long after `ready()`.
-
-A visible line in the consumer's settings cannot fail that way, and they are already editing that
-block for the app and the alias.
-
-**The alias is `archive`**, and the app is `evennia_archive`. Sibling routers use one name for both,
-which is why `ArchiveRouter` carries `app_label` and `alias` as separate attributes — conflating them
-would route the library's own models to an alias that does not exist.
-
 ## What is not checked for you
 
-`check_settings()` refuses to start on a settings module it cannot work with, but three things sit
+`check_settings()` refuses to start on a settings module it cannot work with, but two things sit
 outside what it can see. They are yours to get right.
 
 - **`INSTALLED_APPS`.** Leave the library out and `AppConfig.ready()` never runs, so the boot check
   never runs either. Nothing validates anything, and the library is simply inert.
-- **Whether the archive has been migrated.** `evennia migrate --database archive` is a separate
-  command and is not implied by a bare `migrate`. Checking it would mean a database query inside
-  `ready()`, which Django advises against. A missed migration surfaces as a missing-table error at
-  the first archive.
-- **The router.** Its absence leaves a stray `evennia_archive_archiverecord` in the game database and
-  breaks nothing — every query this library issues names the alias explicitly. It is not checked
-  because refusing to start over it would be disproportionate.
+- **Whether the archive has been migrated.** The alias's migrate run is a separate step and is not
+  implied by the game's — `evennia cascade_migrate` covers both, the bare `evennia migrate` does
+  not. Checking it would mean a database query inside `ready()`, which Django advises against. A
+  missed migration surfaces as a missing-table error at the first archive.
 
 One thing the boot check does cover, but only to the depth settings can express: **the archive and the
 game being the same database.** It compares engine, name, host and port, so two entries reaching one

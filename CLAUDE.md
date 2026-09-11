@@ -71,12 +71,9 @@ Decided as questions arise — the project is too young for a settled list. Ruli
 - **Database backups.** This is not `pg_dump` and is not a substitute for backing up a database.
 - **Consumer-minted identifiers.** Identity is the mixin's to mint, not the consumer's to supply. See
   principle 5.
-- **A database-resolution helper, for now.** The standard has a library owning an alias ship an
-  `archive_database()` / `describe_archive_database()` pair, and the linter reports its absence as
-  `database_helper_missing`. That is a **deliberate deferral, not an oversight**: `evennia-database-cascade`
-  is being built to formalise exactly that resolution, and this library will take it as a direct
-  dependency rather than hand-roll a second implementation to throw away. The consumer writes the
-  `DATABASES` entry by hand until then. Do not close the warn by writing the helper — see
+- **Database resolution and routing.** Both belong to `evennia-database-cascade`: this library
+  declares its alias in [db_spec.py](src/evennia_archive/db_spec.py) and ships no router, no
+  `DATABASES` snippet and no resolution code. Do not write any of them back — see
   [docs/interoperability.md](docs/interoperability.md) § evennia-database-cascade.
 
 ## Working conventions
@@ -124,7 +121,7 @@ evennia-archive/
 │       ├── api.py             # archive() / restore() / find / delete
 │       ├── apps.py            # AppConfig; ready() runs the boot check
 │       ├── config.py          # every constant, and check_settings()
-│       ├── db_router.py       # ArchiveRouter
+│       ├── db_spec.py         # the AliasSpec declared to evennia-database-cascade
 │       ├── lockfuncs.py       # owns_character()
 │       ├── log.py             # binds archive_log via evennia-logging-extension → archive.log
 │       ├── migrations/        # ArchiveRecord's schema
@@ -137,7 +134,8 @@ evennia-archive/
 ## Tools and environment
 
 - Python 3.10+ (pinned via `pyproject.toml`).
-- Runtime dependencies: Evennia and `evennia-logging-extension`. The extension is not published, so
-  a dev venv installs it from its checkout: `pip install -e ../evennia-logging-extension`.
+- Runtime dependencies: Evennia, `evennia-database-cascade` and `evennia-logging-extension`.
+  Neither sibling is published, so a dev venv installs them from their checkouts:
+  `pip install -e ../evennia-database-cascade -e ../evennia-logging-extension`.
 - Tests run through Django's test runner via `python runtests.py` — not pytest.
 - Development uses a dedicated venv at `venv/` (gitignored), independent of any consumer game.

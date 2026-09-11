@@ -26,4 +26,5 @@
 
 evennia
 -e ../../../evennia-logging-extension
+-e ../../../evennia-database-cascade
 -e ../..

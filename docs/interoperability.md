@@ -31,20 +31,21 @@ calendar owns no tables; nothing archived refers to it, and a restore changes no
 
 ## evennia-database-cascade
 
-**Hard dependency — agreed, not yet in place.** The cascade formalises how an alias resolves its
-connection: a per-alias URL for its own Postgres instance, then a shared URL, then a local SQLite
-file. This library will take it as a direct dependency rather than hand-rolling that resolution.
+**Hard dependency.** This library declares its alias in `db_spec.py` and the cascade derives the
+`DATABASES` entry, the router and the migration list from it — the library ships no router and no
+resolution code of its own. This is the cascade's first real consumer.
 
 **The constraint runs from here to there: this library cannot use the shared rung.** The archive is a
 clone of Evennia's schema, so pointing its alias at the game's database does not give it a second set
-of tables — it hands it Evennia's. Every other alias in the corpus owns uniquely-named tables and
-shares perfectly well; this one is the exception, and the cascade has to be able to express it.
+of tables — it hands it Evennia's. The spec expresses both halves:
+`allow_sharing_common_db=False` (the shared `DATABASE_URL` rung is refused) and
+`allow_foreign_tables_in_own_db=True` (Evennia's tables are exactly what belongs in the archive's
+database).
 
-Until the dependency lands, `check_settings()` enforces the constraint from this side: it refuses to
-start when the archive and the game resolve to the same database.
-
-`[TBD — needs discussion: whether the cascade expresses "this alias may not share" as a per-library
-declaration, or whether each library asserts it for itself at boot as this one does now.]`
+`check_settings()` still asserts the constraint from this side — it refuses to start when the
+archive and the game resolve to the same database. The two checks are deliberate belt and braces: a
+hand-written `DATABASES` entry bypasses the cascade, and an operator pointing `DATABASE_URL_ARCHIVE`
+at the game's own database passes the cascade's rules and is caught only here.
 
 ## evennia-equipment
 

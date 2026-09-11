@@ -95,11 +95,32 @@ The library's constants, in one file, imported wherever they are needed. `ARCHIV
 rather than a setting: the alias is always `archive`, a consumer declares a `DATABASES` entry under
 that key, and nothing reads the name back from them.
 
+`CT-01` is retired. It pinned the hand-rolled `ArchiveRouter`'s alias to the config constant; the
+router is gone — `evennia-database-cascade` derives one from the spec — and `DS-01` pins the same
+fact on the spec instead. Do not reuse the ID.
+
 | ID | Case | Test function |
 |---|---|---|
-| CT-01 | `ArchiveRouter.alias` is `config.ARCHIVE_ALIAS`, not a second literal. The two were independent strings holding `"archive"`, with nothing to say they were the same thing | `TestConfigConstants.test_router_uses_the_config_alias` |
 | CT-02 | `api` routes through `config.ARCHIVE_ALIAS` — the archived copy lands under the alias the router steers | `TestConfigConstants.test_api_routes_through_the_config_alias` |
 | CT-03 | The attribute keys `ARCHIVE_ID_KEY` and `OWNER_ACCOUNT_KEY` resolve to the same values the mixins store, so moving them broke no stored identity | `TestConfigConstants.test_attribute_keys_are_unchanged` |
+
+## The database spec
+
+The library owns tables on an alias, so it declares an `AliasSpec` and `evennia-database-cascade`
+derives the `DATABASES` entry, the router and the migration list from it — the library ships no
+router and no resolution code of its own.
+
+The two `allow_` flags are the schema-clone constraint, and `DS-02`/`DS-03` pin them so they are not
+later normalised back to the defaults: the archive holds Evennia's own table names, so the game's
+database would hand it the live tables (`allow_sharing_common_db=False`), and Evennia's tables are
+exactly what belongs in the archive's database (`allow_foreign_tables_in_own_db=True`).
+
+| ID | Case | Test function |
+|---|---|---|
+| DS-01 | `SPEC.app_label` is `evennia_archive` and `SPEC.alias` is `config.ARCHIVE_ALIAS`, not a second literal | `TestDatabaseSpec.test_the_spec_names_the_config_alias` |
+| DS-02 | The spec refuses the shared rung — `allow_sharing_common_db` is `False` | `TestDatabaseSpec.test_the_spec_refuses_the_shared_rung` |
+| DS-03 | The spec accepts foreign tables in its own database — `allow_foreign_tables_in_own_db` is `True` | `TestDatabaseSpec.test_the_spec_accepts_foreign_tables` |
+| DS-04 | `configure()` with this library installed and an empty environment returns an `archive` entry on the SQLite rung and a router that sends `ArchiveRecord` to the alias — discovery, resolution and routing proven from this side of the contract | `TestDatabaseSpec.test_configure_resolves_and_routes_the_alias` |
 
 ## What the library logs
 

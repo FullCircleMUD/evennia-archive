@@ -25,33 +25,40 @@ GAME_DIR = tempfile.gettempdir()
 LOG_DIR = os.path.join(tempfile.gettempdir(), "evennia_archive_test_logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
-# Library under test
-INSTALLED_APPS = list(INSTALLED_APPS) + ["evennia_archive"]  # noqa: F405
+# Library under test, and the cascade that places its alias — including the
+# cascade's app, so its boot check runs here the way it would in a consumer.
+INSTALLED_APPS = list(INSTALLED_APPS) + [  # noqa: F405
+    "evennia_archive",
+    "evennia_database_cascade",
+]
 
-# Two in-memory databases, mirroring a real consumer install: the game,
-# and the archive it copies into. Without the second alias and the router,
-# a test for archive() would write to `default` and pass for the wrong
-# reason.
-#
-# The TEST names are not decoration. Two aliases both saying ":memory:"
-# look like one database to Django's test runner, which then treats the
-# second as a mirror of the first — so the router would appear to work
-# while both aliases pointed at the same physical database. Distinct
-# shared-cache URIs keep them genuinely separate.
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": ":memory:",
         "TEST": {"NAME": "file:evennia_archive_test_default?mode=memory&cache=shared"},
     },
-    "archive": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": ":memory:",
-        "TEST": {"NAME": "file:evennia_archive_test_archive?mode=memory&cache=shared"},
-    },
 }
 
-DATABASE_ROUTERS = ["evennia_archive.db_router.ArchiveRouter"]
+# The archive alias and its router come from the cascade, resolved from this
+# library's own db_spec — the suite exercises the real consumer path on every
+# run. The environment is {} rather than os.environ so the suite always lands
+# on the SQLite rung, whatever DATABASE_URLs the machine carries.
+from evennia_database_cascade import configure  # noqa: E402
+
+DATABASES, DATABASE_ROUTERS = configure(DATABASES, INSTALLED_APPS, GAME_DIR, {})
+
+# The TEST names are not decoration. Two aliases both saying ":memory:"
+# look like one database to Django's test runner, which then treats the
+# second as a mirror of the first — so the router would appear to work
+# while both aliases pointed at the same physical database. Distinct
+# shared-cache URIs keep them genuinely separate. Re-applied here because
+# configure() resolves the alias to a real archive.db3 file, and the suite
+# wants it in memory like the game database.
+DATABASES["archive"]["NAME"] = ":memory:"
+DATABASES["archive"]["TEST"] = {
+    "NAME": "file:evennia_archive_test_archive?mode=memory&cache=shared"
+}
 
 # check_settings() runs at django.setup(), so the suite has to boot on a
 # settings module the library accepts. Registered here as well as per-class,

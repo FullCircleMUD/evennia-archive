@@ -1965,25 +1965,66 @@ class TestCheckSettings(PlainTestCase):
         self.assertIn(str(caught.exception), self._read_back_logs())
 
 
+# --- DS: the database spec ---------------------------------------------------
+class TestDatabaseSpec(PlainTestCase):
+    """The AliasSpec this library declares, and the cascade's answer to it."""
+
+    def test_the_spec_names_the_config_alias(self):
+        """DS-01"""
+        import inspect
+
+        from evennia_archive import db_spec
+
+        # Comparing the values proves nothing: Python interns short strings, so
+        # two independent "archive" literals are the same object. The fact worth
+        # pinning is that the spec holds no alias literal of its own.
+        source = inspect.getsource(db_spec)
+        self.assertIn("from .config import", source)
+        self.assertNotIn('alias="archive"', source)
+        self.assertEqual(db_spec.SPEC.app_label, "evennia_archive")
+        self.assertEqual(db_spec.SPEC.alias, config.ARCHIVE_ALIAS)
+
+    def test_the_spec_refuses_the_shared_rung(self):
+        """DS-02"""
+        from evennia_archive.db_spec import SPEC
+
+        self.assertFalse(SPEC.allow_sharing_common_db)
+
+    def test_the_spec_accepts_foreign_tables(self):
+        """DS-03"""
+        from evennia_archive.db_spec import SPEC
+
+        self.assertTrue(SPEC.allow_foreign_tables_in_own_db)
+
+    def test_configure_resolves_and_routes_the_alias(self):
+        """DS-04"""
+        import tempfile
+
+        from evennia_database_cascade import configure
+
+        databases, routers = configure(
+            {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}},
+            ["evennia_archive"],
+            tempfile.gettempdir(),
+            {},
+        )
+        self.assertIn(config.ARCHIVE_ALIAS, databases)
+        self.assertTrue(
+            databases[config.ARCHIVE_ALIAS]["NAME"].endswith("archive.db3")
+        )
+        routed = next(
+            alias
+            for alias in (router.db_for_write(ArchiveRecord) for router in routers)
+            if alias is not None
+        )
+        self.assertEqual(routed, config.ARCHIVE_ALIAS)
+
+
 # --- CT: config.py -----------------------------------------------------------
 class TestConfigConstants(BaseEvenniaTest):
     """The constants every other module imports — `CT-01` to `CT-03`."""
 
     databases = {"default", "archive"}
-
-    def test_router_uses_the_config_alias(self):
-        """CT-01"""
-        import inspect
-
-        from evennia_archive import db_router
-
-        # Comparing the values proves nothing: Python interns short strings, so
-        # two independent "archive" literals are the same object. The fact worth
-        # pinning is that the router holds no literal of its own.
-        source = inspect.getsource(db_router)
-        self.assertIn("from .config import", source)
-        self.assertNotIn('"archive"', source)
-        self.assertEqual(db_router.ArchiveRouter.alias, config.ARCHIVE_ALIAS)
 
     def test_api_routes_through_the_config_alias(self):
         """CT-02"""
