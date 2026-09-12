@@ -19,7 +19,7 @@ from evennia_database_cascade import AliasSpec
 from .config import ARCHIVE_ALIAS
 
 SPEC = AliasSpec(
-    app_label="evennia_archive",
+    app_labels="evennia_archive",
     alias=ARCHIVE_ALIAS,
     allow_sharing_common_db=False,
     allow_foreign_tables_in_own_db=True,

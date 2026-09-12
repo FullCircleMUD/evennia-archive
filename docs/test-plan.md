@@ -117,10 +117,11 @@ exactly what belongs in the archive's database (`allow_foreign_tables_in_own_db=
 
 | ID | Case | Test function |
 |---|---|---|
-| DS-01 | `SPEC.app_label` is `evennia_archive` and `SPEC.alias` is `config.ARCHIVE_ALIAS`, not a second literal | `TestDatabaseSpec.test_the_spec_names_the_config_alias` |
+| DS-01 | `SPEC.app_labels` is `("evennia_archive",)` and `SPEC.alias` is `config.ARCHIVE_ALIAS`, not a second literal | `TestDatabaseSpec.test_the_spec_names_the_config_alias` |
 | DS-02 | The spec refuses the shared rung — `allow_sharing_common_db` is `False` | `TestDatabaseSpec.test_the_spec_refuses_the_shared_rung` |
 | DS-03 | The spec accepts foreign tables in its own database — `allow_foreign_tables_in_own_db` is `True` | `TestDatabaseSpec.test_the_spec_accepts_foreign_tables` |
 | DS-04 | `configure()` with this library installed and an empty environment returns an `archive` entry on the SQLite rung and a router that sends `ArchiveRecord` to the alias — discovery, resolution and routing proven from this side of the contract | `TestDatabaseSpec.test_configure_resolves_and_routes_the_alias` |
+| DS-05 | The spec passes the cascade's own `spec_is_valid`. The contract check the cascade exports for its consumers: a shape rule tightened there goes red here, in this library's CI, rather than in a deployment | `TestDatabaseSpec.test_the_spec_passes_the_cascade_validator` |
 
 ## What the library logs
 

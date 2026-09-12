@@ -1988,7 +1988,7 @@ class TestDatabaseSpec(PlainTestCase):
         source = inspect.getsource(db_spec)
         self.assertIn("from .config import", source)
         self.assertNotIn('alias="archive"', source)
-        self.assertEqual(db_spec.SPEC.app_label, "evennia_archive")
+        self.assertEqual(db_spec.SPEC.app_labels, ("evennia_archive",))
         self.assertEqual(db_spec.SPEC.alias, config.ARCHIVE_ALIAS)
 
     def test_the_spec_refuses_the_shared_rung(self):
@@ -2002,6 +2002,14 @@ class TestDatabaseSpec(PlainTestCase):
         from evennia_archive.db_spec import SPEC
 
         self.assertTrue(SPEC.allow_foreign_tables_in_own_db)
+
+    def test_the_spec_passes_the_cascade_validator(self):
+        """DS-05"""
+        from evennia_database_cascade import spec_is_valid
+
+        from evennia_archive.db_spec import SPEC
+
+        self.assertTrue(spec_is_valid(SPEC))
 
     def test_configure_resolves_and_routes_the_alias(self):
         """DS-04"""
