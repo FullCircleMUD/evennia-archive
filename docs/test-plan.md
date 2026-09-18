@@ -14,7 +14,7 @@ All test functions live in `src/evennia_archive/tests.py`.
 |---|---|
 | `SM` | Smoke — the package installs and Django loads it |
 | `LG` | Logging |
-| `ID` | `ArchivableBaseMixin` — minting and storing the identity |
+| `ID` | `ArchivableBaseMixin` — minting and storing the identity, and `archive_now()` |
 | `OM` | `ArchivableObjectMixin` — the kind-specific mixin for objects |
 | `AM` | `ArchivableAccountMixin` — the kind-specific mixin for accounts |
 | `CM` | `ArchivableCharacterMixin` — the kind-specific mixin for characters |
@@ -221,8 +221,9 @@ library logs, and from where, is the `LO` section.
 ## Identity — `ArchivableBaseMixin`
 
 The parent of the three kind-specific mixins. It owns the identity — `archive_id` and
-`at_archive_init()` — and nothing else. Its creation hooks exist only to refuse, so a consumer who
-mixes the base in directly finds out at creation rather than at the first archive.
+`at_archive_init()` — and `archive_now()`, the instance-side way to archive. Its creation hooks exist
+only to refuse, so a consumer who mixes the base in directly finds out at creation rather than at the
+first archive.
 
 `ID-01` is retired. It covered a creation hook, which is `ArchivableObjectMixin`'s — see `OM-01`.
 
@@ -236,6 +237,23 @@ mixes the base in directly finds out at creation rather than at the first archiv
 | `ID-07` | `at_object_creation` on the base raises `NotImplementedError`, naming the kind-specific mixins | `test_base_refuses_object_creation` |
 | `ID-08` | `at_account_creation` on the base raises the same way | `test_base_refuses_account_creation` |
 | `ID-09` | `at_post_create_character` on the base raises the same way. Only `ArchivableAccountMixin` implements it, so reaching the base's version means an account was declared with the wrong mixin | `test_base_refuses_to_stamp_a_character` |
+| `ID-10` | `archive_now()` copies the calling object into the archive — a copy exists afterwards under that object's `archive_id` | `test_archive_now_archives_the_calling_object` |
+| `ID-11` | It returns the `ArchiveRecord` that `archive()` returns, so a caller can read `archive_id` off the result | `test_archive_now_returns_the_record` |
+| `ID-12` | An object, a character and an account all expose it — the method is the base's, not a kind's | `test_archive_now_is_the_bases_for_every_kind` |
+| `ID-13` | A refusal from `archive()` propagates: a mixin object whose identity was never minted raises `NotArchivable` through `archive_now()` | `test_archive_now_propagates_a_refusal` |
+
+`ID-10` to `ID-13` cover `archive_now()`. It is a wrapper — `archive(self)` — and exists so that
+archiving has one instance-side verb rather than every caller importing the api. `evennia-scaling`
+archives at its session boundaries and FullCircleMUD needs to archive mid-session on a level-up;
+without this each reaches into `evennia_archive.api` separately.
+
+`ID-12` is what pins the method to the base rather than to `ArchivableObjectMixin`. Accounts are
+archived too — a consumer leaving a router archives the account, not the character — so a method that
+covered only objects would leave that path back on the api.
+
+`ID-13` exists because a wrapper is exactly where a defensive `try/except` gets added, and the
+FullCircleMUD method this replaces did precisely that: it caught `Exception`, logged, and returned. A
+swallowed refusal looks identical to a successful archive at every call site.
 
 `ID-07` to `ID-09` are the guard. A true abstract base is not available — Evennia's typeclasses carry
 the `TypeclassBase` metaclass, and adding `ABCMeta` to that raises a metaclass conflict at class

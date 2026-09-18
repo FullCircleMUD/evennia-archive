@@ -98,6 +98,20 @@ class ArchivableBaseMixin:
         self.attributes.add(ARCHIVE_ID_KEY, minted, strattr=True)
         return minted
 
+    def archive_now(self):
+        """Copy this object into the archive now. Returns the ArchiveRecord.
+
+        A thin wrapper over ``api.archive()``, which owns the upsert and
+        the refusals. ``NotArchivable`` propagates — catch it at your call
+        site if a failure should not interrupt what the caller was doing.
+        """
+        # Imported here rather than at module scope: `api` imports the
+        # models, which are not loadable while this module is first
+        # imported.
+        from .api import archive
+
+        return archive(self)
+
     def at_object_creation(self):
         # Characters reach this too — a Character is an Object, and mints
         # its identity through the same hook.

@@ -206,6 +206,8 @@ class TestLogShim(PlainTestCase):
 class TestArchivableBaseMixin(BaseEvenniaTest):
     """Identity is minted at creation, canonical, immutable and unpickled.
 
+    Also covers `archive_now()`, the base's instance-side way to archive.
+
     Exercised through a concrete child, since the base refuses to create.
     """
 
@@ -288,6 +290,54 @@ class TestArchivableBaseMixin(BaseEvenniaTest):
         with self.assertRaises(NotImplementedError) as caught:
             ArchivableBaseMixin.at_post_create_character(account, character)
         self.assertIn("ArchivableAccountMixin", str(caught.exception))
+
+    def test_archive_now_archives_the_calling_object(self):
+        """ID-10"""
+        obj = self._make()
+        obj.archive_now()
+        # Shallow on purpose: that a copy exists, not what is in it.
+        # AR-02 to AR-08 own the contents, and archive_now() carries no
+        # state of its own that could make them differ.
+        self.assertTrue(
+            ArchiveRecord.objects.using("archive")
+            .filter(pk=obj.archive_id)
+            .exists()
+        )
+
+    def test_archive_now_returns_the_record(self):
+        """ID-11"""
+        obj = self._make()
+        record = obj.archive_now()
+        self.assertIsInstance(record, ArchiveRecord)
+        # AR-12 puts the string form back on the record before returning
+        # it, so this compares equal rather than string-against-UUID.
+        self.assertEqual(record.archive_id, obj.archive_id)
+
+    def test_archive_now_is_the_bases_for_every_kind(self):
+        """ID-12"""
+        # Identity rather than hasattr, because presence is not the claim:
+        # this is what fails if the method is moved down to
+        # ArchivableObjectMixin, which would leave accounts — archived
+        # whenever a consumer leaves a router — without one.
+        for typeclass in (
+            ArchivableTestObject,
+            ArchivableTestCharacter,
+            ArchivableTestAccount,
+        ):
+            with self.subTest(typeclass=typeclass.__name__):
+                self.assertIs(
+                    typeclass.archive_now, ArchivableBaseMixin.archive_now
+                )
+
+    def test_archive_now_propagates_a_refusal(self):
+        """ID-13"""
+        # A thin wrapper is exactly where a defensive try/except gets
+        # added. Swallowing here would make a refused archive
+        # indistinguishable from a successful one at every call site.
+        obj = self._make()
+        obj.attributes.remove(ARCHIVE_ID_KEY)
+        with self.assertRaises(NotArchivable):
+            obj.archive_now()
 
 
 @override_settings(LOCK_FUNC_MODULES=_LOCK_FUNC_MODULES)
