@@ -101,7 +101,7 @@ its mixins**, so mixing one in is how a consumer says which of their objects mat
 matching what you are archiving:
 
 ```python
-from evennia_archive.mixins import (
+from evennia_archive import (
     ArchivableAccountMixin,
     ArchivableCharacterMixin,
     ArchivableObjectMixin,

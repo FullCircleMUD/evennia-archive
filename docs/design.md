@@ -306,6 +306,21 @@ and it must land in `db_strvalue` with `db_value` null.
 
 Everything else — when, how often, in response to what — belongs to the consumer.
 
+**`__all__` on the package root is the surface**, and it is kept as small as it can be. A name is
+published because a consumer cannot do its job without it, not because publishing it seems harmless;
+a need that appears later is added then, with a reason. Everything else is internal whatever its
+import path happens to allow.
+
+Ten names, all imported from `evennia_archive` itself:
+
+```python
+from evennia_archive import archive, restore, find_by_attribute, find_by_column, delete
+from evennia_archive import NotArchivable, NotArchived
+from evennia_archive import (
+    ArchivableAccountMixin, ArchivableCharacterMixin, ArchivableObjectMixin,
+)
+```
+
 ```python
 archive(obj)                                                       # obj must carry the mixin
 find_by_attribute(key, value, model=None)                          # → [archive_id, ...]
@@ -313,6 +328,17 @@ find_by_column(model, column, value)                               # → [archiv
 restore(archive_id, return_object=True)
 delete(archive_id)                                                 # removes the archived copy
 ```
+
+The two exception types are published because a caller cannot handle what it cannot name:
+`archive()` raises `NotArchivable` and `restore()` raises `NotArchived`.
+
+The mixins are published because nothing is archivable without one. What a consumer reaches through
+an instance — `archive_id`, `archive_now()`, `at_archive_init()`, `owner_account_archive_id`,
+`get_owner_lockstring()` — arrives with the mixin and needs no export of its own.
+
+Resolution is lazy. The package sits in `INSTALLED_APPS` and `api` reaches `models.py`, so a
+re-export at module scope would run while Django is still building its app registry and raise
+`AppRegistryNotReady`.
 
 `archive()` takes an object and copies it. It does not know or care whether that object is a
 character, an account, a ship or a guild hall.

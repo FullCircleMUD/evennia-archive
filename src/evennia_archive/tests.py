@@ -4,6 +4,8 @@
 Run via ``python runtests.py`` from the library root.
 """
 import os
+import subprocess
+import sys
 import uuid
 from unittest import TestCase as PlainTestCase
 from unittest import mock
@@ -193,6 +195,64 @@ class TestPackageInstalls(PlainTestCase):
     def test_registered_in_installed_apps(self):
         """SM-02"""
         self.assertIn("evennia_archive", settings.INSTALLED_APPS)
+
+
+#: The library's whole public surface, as agreed in docs/test-plan.md.
+PUBLISHED = {
+    "ArchivableAccountMixin",
+    "ArchivableCharacterMixin",
+    "ArchivableObjectMixin",
+    "NotArchivable",
+    "NotArchived",
+    "archive",
+    "delete",
+    "find_by_attribute",
+    "find_by_column",
+    "restore",
+}
+
+
+class TestPublicInterface(PlainTestCase):
+    """PI — what the package root publishes, and what it refuses."""
+
+    def test_every_published_name_resolves(self):
+        """PI-01"""
+        for name in evennia_archive.__all__:
+            with self.subTest(name=name):
+                self.assertTrue(
+                    hasattr(evennia_archive, name),
+                    f"{name} is published but does not resolve from the root",
+                )
+
+    def test_the_surface_is_exactly_the_agreed_names(self):
+        """PI-02"""
+        self.assertEqual(set(evennia_archive.__all__), PUBLISHED)
+
+    def test_importing_the_root_does_not_import_api(self):
+        """PI-03"""
+        # A subprocess, because `api` is imported by the rest of this suite and
+        # importing a submodule binds it on the parent package. Only a fresh
+        # interpreter can say what importing the root alone pulls in.
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys, evennia_archive;"
+                " sys.exit(1 if 'evennia_archive.api' in sys.modules else 0)",
+            ],
+            capture_output=True,
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            "importing the package root pulled in api, which reaches the "
+            f"models: {result.stderr.decode()}",
+        )
+
+    def test_an_unpublished_name_raises_attribute_error(self):
+        """PI-04"""
+        with self.assertRaises(AttributeError):
+            evennia_archive.ARCHIVE_ALIAS
 
 
 class TestLogShim(PlainTestCase):

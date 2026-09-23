@@ -13,6 +13,7 @@ All test functions live in `src/evennia_archive/tests.py`.
 | Prefix | Covers |
 |---|---|
 | `SM` | Smoke — the package installs and Django loads it |
+| `PI` | The public interface — what the package root publishes, and what it refuses |
 | `LG` | Logging |
 | `ID` | `ArchivableBaseMixin` — minting and storing the identity, and `archive_now()` |
 | `OM` | `ArchivableObjectMixin` — the kind-specific mixin for objects |
@@ -206,6 +207,54 @@ If it lands, `LO-09` becomes a line per object and needs a summary form instead.
 |---|---|---|
 | `SM-01` | The package exposes `__version__` | `test_version_is_exposed` |
 | `SM-02` | Django loads `evennia_archive` as an installed app | `test_registered_in_installed_apps` |
+
+## The public interface
+
+`__all__` on the package root is the library's public surface. Everything else is internal whatever
+its import path happens to allow.
+
+**The surface is as small as it can be.** A name is published because a consumer cannot do its job
+without it, not because publishing it seems harmless. Ten names earn it:
+
+| Name | Why a consumer cannot do without it |
+|---|---|
+| `archive` | the write |
+| `restore` | the read back |
+| `find_by_attribute` | finding by an attribute |
+| `find_by_column` | finding by a column |
+| `delete` | the hard delete |
+| `NotArchivable` | `archive()` raises it, and the library tells callers to catch it |
+| `NotArchived` | `restore()` raises it |
+| `ArchivableObjectMixin` | composed onto a typeclass; nothing is archivable without one |
+| `ArchivableCharacterMixin` | as above |
+| `ArchivableAccountMixin` | as above |
+
+Everything a consumer reaches through an instance — `archive_id`, `archive_now()`,
+`at_archive_init()`, `owner_account_archive_id`, `get_owner_lockstring()` — arrives with the mixin
+and needs no export of its own.
+
+Deliberately not published: `ArchiveRecord`, `ArchivableBaseMixin`, `ARCHIVE_ALIAS`, every other
+`config` constant, `check_settings()`, and all seventeen `api` helpers. A need that appears later is
+added then, with a reason.
+
+**Resolution is lazy.** `api` imports the models, and the package root is imported while Django is
+still building its app registry — so a re-export at module scope raises `AppRegistryNotReady` and
+the server does not start.
+
+| ID | Case | Test function |
+|---|---|---|
+| PI-01 | Every name in `__all__` resolves from the package root | `test_every_published_name_resolves` |
+| PI-02 | `__all__` is exactly the ten agreed names | `test_the_surface_is_exactly_the_agreed_names` |
+| PI-03 | Importing the package root does not import `api`, so no model is touched at import time | `test_importing_the_root_does_not_import_api` |
+| PI-04 | A name the package does not publish raises `AttributeError` | `test_an_unpublished_name_raises_attribute_error` |
+
+- **PI-02** is the small-surface rule made testable. A name published without anyone deciding to
+  fails here, which is the only place that decision gets recorded.
+- **PI-03** is the one that stops the server booting if it regresses. It fails the moment a
+  convenience import is added at module scope.
+- **PI-04** is the other half of lazy resolution. `__getattr__` must raise `AttributeError` for an
+  unknown name — anything else breaks `hasattr`, and a name that falls through to an ordinary
+  submodule import re-enters the same function.
 
 ## Logging
 
