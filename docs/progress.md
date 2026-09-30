@@ -3,6 +3,18 @@
 Reverse-chronological milestone log. Newest first. Each entry states what became true and what proves
 it.
 
+## 2026-09-30 — Reading attributes without restoring
+
+181 tests.
+
+**`read_attributes(archive_ids, keys)` joins the public surface**, which is now eleven names. It returns
+`{archive_id: {key: value}}` for the named attributes of many archived objects, as values, building no
+typeclass instance — one query for the records and one per archived model, however many identifiers.
+Category-less attributes only, the ones `obj.db` reads. `RA-01` to `RA-10` cover it, including a read
+proved to come from the archive by letting the two copies diverge (`RA-09`) and a query count that
+does not grow with the identifiers (`RA-10`); every case was shown to fail against a mutation of the
+condition it names. `PI-02` now counts eleven names.
+
 ## 2026-09-11 — Every refusal logs before it raises
 
 **Six sites, one shape**: message built once, `archive_log(message, level="ERROR")`, then the raise

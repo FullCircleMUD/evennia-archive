@@ -5,15 +5,16 @@ A second Evennia database on the same schema, migrated alongside the game and
 never run as a game, holding accounts and characters. Rebuild the world from
 source and the players survive it.
 
-``__all__`` below is the public surface. A consumer makes five calls, composes
+``__all__`` below is the public surface. A consumer makes six calls, composes
 one of three mixins onto its own typeclasses, and catches two exception types —
 everything else is internal whatever its import path happens to allow.
 
-Five calls::
+Six calls::
 
     archive(obj)                       copy an object into the archive
     find_by_attribute(key, value)      archive ids of objects matching an attribute
     find_by_column(model, col, value)  archive ids of rows matching a column
+    read_attributes(ids, keys)         named attributes of many, without restoring
     restore(archive_id)                rebuild one in the live database
     delete(archive_id)                 remove an archived copy
 
@@ -50,6 +51,7 @@ _SOURCES = {
     "delete": "evennia_archive.api",
     "find_by_attribute": "evennia_archive.api",
     "find_by_column": "evennia_archive.api",
+    "read_attributes": "evennia_archive.api",
     "restore": "evennia_archive.api",
 }
 

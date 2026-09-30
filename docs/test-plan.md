@@ -24,6 +24,7 @@ All test functions live in `src/evennia_archive/tests.py`.
 | `AC` | The same round trip on `AccountDB` rather than `ObjectDB` |
 | `FN` | `find_by_attribute()` |
 | `FC` | `find_by_column()` |
+| `RA` | `read_attributes()` |
 | `DL` | `delete()` |
 | `UC` | Restore into a taken unique value |
 | `PG` | `_purge_attributes()` — clearing one row's attributes in one database |
@@ -214,7 +215,7 @@ If it lands, `LO-09` becomes a line per object and needs a summary form instead.
 its import path happens to allow.
 
 **The surface is as small as it can be.** A name is published because a consumer cannot do its job
-without it, not because publishing it seems harmless. Ten names earn it:
+without it, not because publishing it seems harmless. Eleven names earn it:
 
 | Name | Why a consumer cannot do without it |
 |---|---|
@@ -222,6 +223,7 @@ without it, not because publishing it seems harmless. Ten names earn it:
 | `restore` | the read back |
 | `find_by_attribute` | finding by an attribute |
 | `find_by_column` | finding by a column |
+| `read_attributes` | reading named attributes of many archived objects without restoring any |
 | `delete` | the hard delete |
 | `NotArchivable` | `archive()` raises it, and the library tells callers to catch it |
 | `NotArchived` | `restore()` raises it |
@@ -244,7 +246,7 @@ the server does not start.
 | ID | Case | Test function |
 |---|---|---|
 | PI-01 | Every name in `__all__` resolves from the package root | `test_every_published_name_resolves` |
-| PI-02 | `__all__` is exactly the ten agreed names | `test_the_surface_is_exactly_the_agreed_names` |
+| PI-02 | `__all__` is exactly the eleven agreed names | `test_the_surface_is_exactly_the_agreed_names` |
 | PI-03 | Importing the package root does not import `api`, so no model is touched at import time | `test_importing_the_root_does_not_import_api` |
 | PI-04 | A name the package does not publish raises `AttributeError` | `test_an_unpublished_name_raises_attribute_error` |
 
@@ -567,6 +569,33 @@ raise on the models that lack the column or swallow the miss silently.
 | `FC-10` | A text column matches whatever the case — the default | `test_a_text_column_ignores_case` |
 | `FC-11` | `case_insensitive=False` matches a text column exactly | `test_case_can_be_required_on_a_column` |
 | `FC-12` | A non-text column is matched exactly whatever the flag says. `iexact` on a boolean or an integer is meaningless, and asking for it must not break a search that works | `test_a_non_text_column_is_unaffected_by_the_flag` |
+
+## `read_attributes()`
+
+Reads named attributes of many archived objects at once, as values, without restoring any of them.
+Takes a list of archive identifiers and a list of attribute keys; returns
+`{archive_id: {key: value}}`. What a consumer asks for is its own business — the library names no
+attribute.
+
+The read is a projection: rows come back as values and no typeclass instance is built, so a consumer
+reading thousands of archived characters does not pull them into its process's cache. It reads the
+category-less attributes, the ones `obj.db.<key>` reads — a same-named attribute in a category is a
+different attribute.
+
+**Wrap it in `deferToThread`**, as the finds.
+
+| ID | Case | Test function |
+|---|---|---|
+| `RA-01` | An empty list of identifiers, or of keys, returns an empty mapping and makes no query | `test_an_empty_request_returns_nothing_and_queries_nothing` |
+| `RA-02` | Each requested key an archived object holds comes back with its value, unpickled | `test_each_requested_key_comes_back_with_its_value` |
+| `RA-03` | An attribute stored unpickled comes back as its string — the `db_strvalue` half | `test_an_unpickled_attribute_comes_back_as_its_string` |
+| `RA-04` | A key the object does not hold is absent from its entry, not present as `None` | `test_a_key_the_object_lacks_is_absent` |
+| `RA-05` | An archived object holding none of the keys has an empty entry; an identifier the archive does not hold has none | `test_an_object_holding_none_of_the_keys_is_empty_and_an_unknown_id_is_absent` |
+| `RA-06` | Only category-less attributes are read: a same-named attribute in a category neither replaces the value nor adds to it | `test_only_category_less_attributes_are_read` |
+| `RA-07` | Attributes the caller did not name are not returned | `test_attributes_not_named_are_not_returned` |
+| `RA-08` | Objects and accounts are read in one call | `test_objects_and_accounts_are_read_in_one_call` |
+| `RA-09` | The read is from the archive, proved by letting the two copies diverge: the archived value comes back and the live one does not. Same class of defect as `FC-08` | `test_the_read_is_from_the_archive_not_the_live_database` |
+| `RA-10` | One query per archived model the identifiers belong to, however many identifiers there are | `test_the_query_count_does_not_grow_with_the_identifiers` |
 
 ## `delete()`
 

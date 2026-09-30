@@ -311,10 +311,11 @@ published because a consumer cannot do its job without it, not because publishin
 a need that appears later is added then, with a reason. Everything else is internal whatever its
 import path happens to allow.
 
-Ten names, all imported from `evennia_archive` itself:
+Eleven names, all imported from `evennia_archive` itself:
 
 ```python
 from evennia_archive import archive, restore, find_by_attribute, find_by_column, delete
+from evennia_archive import read_attributes
 from evennia_archive import NotArchivable, NotArchived
 from evennia_archive import (
     ArchivableAccountMixin, ArchivableCharacterMixin, ArchivableObjectMixin,
@@ -325,6 +326,7 @@ from evennia_archive import (
 archive(obj)                                                       # obj must carry the mixin
 find_by_attribute(key, value, model=None)                          # → [archive_id, ...]
 find_by_column(model, column, value)                               # → [archive_id, ...]
+read_attributes(archive_ids, keys)                                 # → {archive_id: {key: value}}
 restore(archive_id, return_object=True)
 delete(archive_id)                                                 # removes the archived copy
 ```
@@ -452,11 +454,28 @@ matches quietly, which is worse than none. Search with a value of the type you s
 term to it. The library's own lookups are immune too: `archive_id` is stored unpickled and compared as
 a plain string. That was chosen for protocol stability; type-insensitivity is a second dividend.
 
-> **Unknown — a gap this raises.** A consumer with several matches has to choose between them, and
-> `archive_id` alone tells them nothing. They would need to see something per candidate — key,
-> typeclass, when it was last archived — without restoring it. That implies a read-only peek
-> operation. Not needed for FCM, where the wallet is unique, but a generic consumer with a
-> non-unique field meets it immediately.
+### Reading attributes without restoring
+
+**`read_attributes()` reads named attributes of many archived objects at once, and restores none of
+them.** It takes a list of archive identifiers and a list of attribute keys, and returns
+`{archive_id: {key: value}}`. Which attributes are worth reading is the consumer's to say; the library
+names none.
+
+```python
+read_attributes(archive_ids, keys)                                 # → {archive_id: {key: value}}
+```
+
+- **A projection, not a restore.** Rows come back as values and no typeclass instance is built, so
+  reading thousands of archived objects puts none of them in the reading process's cache.
+- **The same attributes `obj.db.<key>` reads** — category-less ones. A same-named attribute in a
+  category is a different attribute and is not read.
+- **Every identifier the archive holds has an entry**, empty when it holds none of the keys; one it
+  does not hold has none. A key an object lacks is absent from its entry rather than `None`.
+- **One query for the records and one per archived model**, however many identifiers — objects and
+  accounts can be read in the same call.
+
+Defer it, as the finds: the query count is fixed, but the rows it returns grow with the identifiers
+and the keys, and the archive may not be local.
 
 ### Deletion is offered, not mandated
 
@@ -703,8 +722,6 @@ Collected from the boxes above, so they can be worked through deliberately.
 
 **Not yet examined at all:**
 
-- A read-only peek at an archived object, so a consumer whose lookup field is not unique can choose
-  between candidates without restoring all of them.
 - Behaviour under a sharded consumer, where the live game spans several databases.
 - Whether the archive should hold history or only the latest state of each object.
 - A bulk restore call. It would use `bulk_create` and build no instances, so its return type is its

@@ -12,7 +12,9 @@ from unittest import mock
 
 from django.conf import settings
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
+from django.db import connections
 from django.test import override_settings
+from django.test.utils import CaptureQueriesContext
 from evennia.accounts.accounts import DefaultAccount
 from evennia.locks import lockhandler
 from evennia.accounts.models import AccountDB
@@ -36,6 +38,7 @@ from evennia_archive.api import (
     delete,
     find_by_attribute,
     find_by_column,
+    read_attributes,
     restore,
 )
 from evennia_archive.lockfuncs import owns_character
@@ -208,6 +211,7 @@ PUBLISHED = {
     "delete",
     "find_by_attribute",
     "find_by_column",
+    "read_attributes",
     "restore",
 }
 
@@ -1456,6 +1460,145 @@ class TestFindByColumn(BaseEvenniaTest):
             ),
             [account.archive_id],
         )
+
+
+class TestReadAttributes(BaseEvenniaTest):
+    """read_attributes() reads named attributes of many archived objects."""
+
+    databases = {"default", "archive"}
+
+    def _archived_object(self, key="subject", **attributes):
+        obj = create_object(ArchivableTestObject, key=key)
+        for name, value in attributes.items():
+            obj.attributes.add(name, value)
+        archive(obj)
+        return obj
+
+    def _archived_account(self, username="rowan", **attributes):
+        account = create_account(
+            username, f"{username}@example.com", "sekritpw",
+            typeclass=ArchivableTestAccount,
+        )
+        for name, value in attributes.items():
+            account.attributes.add(name, value)
+        archive(account)
+        return account
+
+    def _queries(self, archive_ids, keys):
+        """The queries a read makes on each alias, alongside its result."""
+        with CaptureQueriesContext(connections["archive"]) as on_archive, \
+                CaptureQueriesContext(connections["default"]) as on_default:
+            result = read_attributes(archive_ids, keys)
+        return result, len(on_archive), len(on_default)
+
+    def test_an_empty_request_returns_nothing_and_queries_nothing(self):
+        """RA-01"""
+        obj = self._archived_object(spells=["fireball"])
+
+        for archive_ids, keys in (([], ["spells"]), ([obj.archive_id], [])):
+            with self.subTest(archive_ids=archive_ids, keys=keys):
+                result, on_archive, on_default = self._queries(archive_ids, keys)
+                self.assertEqual(result, {})
+                self.assertEqual((on_archive, on_default), (0, 0))
+
+    def test_each_requested_key_comes_back_with_its_value(self):
+        """RA-02"""
+        obj = self._archived_object(
+            spells=["fireball", "light"], masteries={"evocation": 3}
+        )
+
+        result = read_attributes([obj.archive_id], ["spells", "masteries"])
+
+        self.assertEqual(
+            result,
+            {obj.archive_id: {"spells": ["fireball", "light"], "masteries": {"evocation": 3}}},
+        )
+
+    def test_an_unpickled_attribute_comes_back_as_its_string(self):
+        """RA-03"""
+        obj = create_object(ArchivableTestObject, key="subject")
+        obj.attributes.add("title", "the Bold", strattr=True)
+        archive(obj)
+
+        result = read_attributes([obj.archive_id], ["title"])
+
+        self.assertEqual(result, {obj.archive_id: {"title": "the Bold"}})
+
+    def test_a_key_the_object_lacks_is_absent(self):
+        """RA-04"""
+        obj = self._archived_object(spells=["fireball"])
+
+        entry = read_attributes([obj.archive_id], ["spells", "recipes"])[obj.archive_id]
+
+        self.assertEqual(entry, {"spells": ["fireball"]})
+        self.assertNotIn("recipes", entry)
+
+    def test_an_object_holding_none_of_the_keys_is_empty_and_an_unknown_id_is_absent(self):
+        """RA-05"""
+        obj = self._archived_object(spells=["fireball"])
+        unknown = str(uuid.uuid4())
+
+        result = read_attributes([obj.archive_id, unknown], ["recipes"])
+
+        self.assertEqual(result, {obj.archive_id: {}})
+        self.assertNotIn(unknown, result)
+
+    def test_only_category_less_attributes_are_read(self):
+        """RA-06"""
+        obj = create_object(ArchivableTestObject, key="subject")
+        obj.attributes.add("spells", ["fireball"])
+        obj.attributes.add("spells", ["shadow bolt"], category="forbidden")
+        archive(obj)
+
+        result = read_attributes([obj.archive_id], ["spells"])
+
+        self.assertEqual(result, {obj.archive_id: {"spells": ["fireball"]}})
+
+    def test_attributes_not_named_are_not_returned(self):
+        """RA-07"""
+        obj = self._archived_object(spells=["fireball"], recipes=["bread"])
+
+        entry = read_attributes([obj.archive_id], ["spells"])[obj.archive_id]
+
+        # `archive_id` is an attribute on every archived object; it is not
+        # returned either, because it was not asked for.
+        self.assertEqual(set(entry), {"spells"})
+
+    def test_objects_and_accounts_are_read_in_one_call(self):
+        """RA-08"""
+        obj = self._archived_object(spells=["fireball"])
+        account = self._archived_account(spells=["light"])
+
+        result = read_attributes([obj.archive_id, account.archive_id], ["spells"])
+
+        self.assertEqual(
+            result,
+            {obj.archive_id: {"spells": ["fireball"]}, account.archive_id: {"spells": ["light"]}},
+        )
+
+    def test_the_read_is_from_the_archive_not_the_live_database(self):
+        """RA-09"""
+        obj = self._archived_object(spells=["fireball"])
+        obj.attributes.add("spells", ["fireball", "light"])
+
+        # Only the live object has learned "light".
+        self.assertEqual(
+            read_attributes([obj.archive_id], ["spells"]),
+            {obj.archive_id: {"spells": ["fireball"]}},
+        )
+
+    def test_the_query_count_does_not_grow_with_the_identifiers(self):
+        """RA-10"""
+        one = [self._archived_object(key="one", spells=["fireball"]).archive_id]
+        five = [
+            self._archived_object(key=f"obj{n}", spells=["fireball"]).archive_id
+            for n in range(5)
+        ]
+
+        _, for_one, _ = self._queries(one, ["spells"])
+        _, for_five, _ = self._queries(five, ["spells"])
+
+        self.assertEqual(for_one, for_five)
 
 
 class TestDelete(BaseEvenniaTest):

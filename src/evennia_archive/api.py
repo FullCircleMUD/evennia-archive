@@ -723,6 +723,67 @@ def find_by_column(model, column, value, case_insensitive=True):
     return [str(archive_id) for archive_id in found]
 
 
+def read_attributes(archive_ids, keys):
+    """Named attributes of many archived objects, as ``{archive_id: {key: value}}``.
+
+    A read, not a restore: rows come back as values and no typeclass
+    instance is built, so reading thousands of archived objects pulls none
+    of them into this process's cache. Which attributes are worth reading is
+    the consumer's; the library names none.
+
+    Every identifier the archive holds has an entry, empty when the object
+    holds none of ``keys``. An identifier it does not hold has none, so a
+    caller can tell "not archived" from "nothing to read". A key an object
+    lacks is absent from its entry rather than ``None``.
+
+    Only category-less attributes are read — the ones ``obj.db.<key>``
+    reads. A same-named attribute in a category is a different attribute.
+
+    **Wrap this in deferToThread**, as the finds. It is one query for the
+    records and one per archived model, however many identifiers.
+    """
+    archive_ids, keys = [str(archive_id) for archive_id in archive_ids], list(keys)
+    if not archive_ids or not keys:
+        return {}
+
+    records = (
+        ArchiveRecord.objects.using(ARCHIVE_ALIAS)
+        .filter(archive_id__in=archive_ids)
+        .values_list("archive_id", "archived_model", "archived_pk")
+    )
+
+    result = {}
+    by_model = {}
+    for archive_id, model_name, archived_pk in records:
+        result[str(archive_id)] = {}
+        by_model.setdefault(model_name, {})[archived_pk] = str(archive_id)
+
+    for model_name, archive_id_by_pk in by_model.items():
+        # One filter() call, so the key and the category conditions and the
+        # projected columns all describe the same attribute row.
+        rows = (
+            _model_named(model_name)
+            .objects.using(ARCHIVE_ALIAS)
+            .filter(
+                pk__in=list(archive_id_by_pk),
+                db_attributes__db_key__in=keys,
+                db_attributes__db_category__isnull=True,
+            )
+            .values_list(
+                "pk",
+                "db_attributes__db_key",
+                "db_attributes__db_value",
+                "db_attributes__db_strvalue",
+            )
+        )
+        # strattr sets db_strvalue and leaves db_value null; a normal
+        # attribute is the reverse.
+        for pk, key, value, strvalue in rows:
+            result[archive_id_by_pk[pk]][key] = value if strvalue is None else strvalue
+
+    return result
+
+
 def delete(archive_id):
     """Remove an archived copy and the record pointing at it.
 
