@@ -403,6 +403,21 @@ class TestArchivableBaseMixin(BaseEvenniaTest):
         with self.assertRaises(NotArchivable):
             obj.archive_now()
 
+    def test_at_post_restore_is_the_bases_for_every_kind(self):
+        """ID-14"""
+        # Identity, as in ID-12: the hook has to be the base's for an
+        # override's `super()` to end somewhere on every kind.
+        for typeclass in (
+            ArchivableTestObject,
+            ArchivableTestCharacter,
+            ArchivableTestAccount,
+        ):
+            with self.subTest(typeclass=typeclass.__name__):
+                self.assertIs(
+                    typeclass.at_post_restore, ArchivableBaseMixin.at_post_restore
+                )
+        self.assertIsNone(self._make().at_post_restore())
+
 
 @override_settings(LOCK_FUNC_MODULES=_LOCK_FUNC_MODULES)
 class TestArchivableAccountMixin(BaseEvenniaTest):
@@ -1171,6 +1186,97 @@ class TestRestore(BaseEvenniaTest):
         restore(archive_id)
         after = ArchiveRecord.objects.using("archive").get(pk=archive_id)
         self.assertIsNotNone(after.last_restored)
+
+
+class RestoreHookTestObject(ArchivableObjectMixin, DefaultObject):
+    """Records what `at_post_restore()` could see — `RS-10` to `RS-13`.
+
+    Class-level, because the instance the hook runs on is made by the
+    restore and the test never holds it. Reset by `TestRestoreHook.setUp`.
+    """
+
+    seen = []
+    fail = False
+
+    def at_post_restore(self):
+        super().at_post_restore()
+        type(self).seen.append(
+            {
+                "pk": self.pk,
+                "level": self.attributes.get("level"),
+                "tagged": bool(self.tags.get("veteran", category="rank")),
+            }
+        )
+        if type(self).fail:
+            raise RuntimeError("the hook failed")
+
+
+class TestRestoreHook(BaseEvenniaTest):
+    """RS-10 to RS-13 — `at_post_restore()`, called by `restore()`."""
+
+    databases = {"default", "archive"}
+
+    def setUp(self):
+        super().setUp()
+        RestoreHookTestObject.seen = []
+        RestoreHookTestObject.fail = False
+
+    def _archive_then_wipe(self):
+        obj = create_object(RestoreHookTestObject, key="Rowan")
+        obj.attributes.add("level", 12)
+        obj.tags.add("veteran", category="rank")
+        archive_id = obj.archive_id
+        archive(obj)
+        obj.delete()
+        return archive_id
+
+    def _live(self, archive_id):
+        return ObjectDB.objects.filter(
+            db_attributes__db_key=ARCHIVE_ID_KEY,
+            db_attributes__db_strvalue=archive_id,
+        ).exists()
+
+    def test_restore_calls_at_post_restore_once_the_object_is_back(self):
+        """RS-10"""
+        restored = restore(self._archive_then_wipe())
+
+        self.assertEqual(
+            RestoreHookTestObject.seen,
+            [{"pk": restored.pk, "level": 12, "tagged": True}],
+        )
+
+    def test_an_already_live_object_is_not_given_the_hook(self):
+        """RS-11"""
+        archive_id = self._archive_then_wipe()
+        restore(archive_id)
+
+        restore(archive_id)
+
+        self.assertEqual(len(RestoreHookTestObject.seen), 1)
+
+    def test_a_raising_hook_rolls_the_restore_back(self):
+        """RS-12"""
+        archive_id = self._archive_then_wipe()
+        RestoreHookTestObject.fail = True
+
+        with self.assertRaises(RuntimeError):
+            restore(archive_id)
+
+        self.assertFalse(self._live(archive_id))
+        failed_pk = RestoreHookTestObject.seen[-1]["pk"]
+        self.assertIsNone(ObjectDB.get_cached_instance(failed_pk))
+
+        RestoreHookTestObject.fail = False
+        restored = restore(archive_id)
+
+        self.assertTrue(self._live(archive_id))
+        self.assertEqual(RestoreHookTestObject.seen[-1]["pk"], restored.pk)
+
+    def test_the_hook_runs_when_only_the_key_is_returned(self):
+        """RS-13"""
+        live_pk = restore(self._archive_then_wipe(), return_object=False)
+
+        self.assertEqual(RestoreHookTestObject.seen[-1]["pk"], live_pk)
 
 
 class ArchivableTestAccount(ArchivableAccountMixin, DefaultAccount):

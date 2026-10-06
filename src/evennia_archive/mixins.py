@@ -112,6 +112,19 @@ class ArchivableBaseMixin:
 
         return archive(self)
 
+    def at_post_restore(self):
+        """Called by `restore()` once this object is back in the live database.
+
+        A restore writes rows rather than creating objects, so
+        `at_object_creation` does not run. Anything a typeclass made there
+        as a separate object comes back as a reference to a row this
+        database does not hold — override this to make it again.
+
+        Runs inside the restore's transaction: a raise here undoes the
+        restore. Does nothing on the base, so an override's `super()` call
+        ends here.
+        """
+
     def at_object_creation(self):
         # Characters reach this too — a Character is an Object, and mints
         # its identity through the same hook.

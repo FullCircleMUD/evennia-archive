@@ -293,6 +293,7 @@ first archive.
 | `ID-11` | It returns the `ArchiveRecord` that `archive()` returns, so a caller can read `archive_id` off the result | `test_archive_now_returns_the_record` |
 | `ID-12` | An object, a character and an account all expose it — the method is the base's, not a kind's | `test_archive_now_is_the_bases_for_every_kind` |
 | `ID-13` | A refusal from `archive()` propagates: a mixin object whose identity was never minted raises `NotArchivable` through `archive_now()` | `test_archive_now_propagates_a_refusal` |
+| `ID-14` | `at_post_restore()` on the base does nothing. An object, a character and an account all expose it, so an override's `super()` call ends there | `test_at_post_restore_is_the_bases_for_every_kind` |
 
 `ID-10` to `ID-13` cover `archive_now()`. It is a wrapper — `archive(self)` — and exists so that
 archiving has one instance-side verb rather than every caller importing the api. `evennia-scaling`
@@ -522,6 +523,20 @@ object created before the mixin was added looks like.
 | `RS-07` | Restoring twice returns the same object rather than duplicating it | `test_restoring_twice_does_not_duplicate` |
 | `RS-08` | `return_object=False` yields the primary key instead of the instance | `test_return_object_false_yields_a_key` |
 | `RS-09` | A restore stamps `last_restored`, which was null before | `test_restore_stamps_last_restored` |
+| `RS-10` | A restore calls the restored object's `at_post_restore()` once, and its attributes and tags are already back when it does | `test_restore_calls_at_post_restore_once_the_object_is_back` |
+| `RS-11` | Restoring an object that is already live does not call it, because nothing was restored | `test_an_already_live_object_is_not_given_the_hook` |
+| `RS-12` | A hook that raises rolls the restore back. The exception propagates, nothing is live afterwards, and a retry restores it and runs the hook | `test_a_raising_hook_rolls_the_restore_back` |
+| `RS-13` | The hook runs with `return_object=False` too. Whether the caller wants the object back is not whether it was restored | `test_the_hook_runs_when_only_the_key_is_returned` |
+
+**`at_post_restore()` is the consumer's way back to creation-time setup.** A restore writes rows rather
+than creating objects, so `at_object_creation` never runs, and anything a typeclass made there as a
+separate object comes back as a reference to a row that is not in this database. The hook is where it
+is made again.
+
+**`RS-12` is why it runs inside the restore's transaction.** Run after the commit, a raising hook leaves
+the row live — and the next `restore()` takes the already-live branch and never runs the hook again,
+with nothing left to repair the object. The rolled-back object is also evicted from Evennia's identity
+map, or a retry landing on the same primary key is handed the stale instance.
 
 ## Accounts
 

@@ -140,6 +140,17 @@ def at_object_creation(self):
     ...your own setup...
 ```
 
+**A restored object does not run `at_object_creation`.** A restore writes rows rather than creating
+an object, so anything your typeclass made there as a separate object comes back as a reference to a
+row this database does not hold. Override `at_post_restore()` to make it again — `restore()` calls it
+once the object is back, inside the same transaction, so a raise undoes the restore:
+
+```python
+def at_post_restore(self):
+    super().at_post_restore()
+    ...remake what at_object_creation made...
+```
+
 **Existing objects predate the mixin and have no identity.** Adding it to a typeclass affects objects
 created from then on; anything already in your database needs `at_archive_init()` called on it once,
 which is safe to run repeatedly and never overwrites an identity that already exists. The owner stamp

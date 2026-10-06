@@ -3,6 +3,19 @@
 Reverse-chronological milestone log. Newest first. Each entry states what became true and what proves
 it.
 
+## 2026-10-06 — `at_post_restore()`, and account `#1`'s characters
+
+189 tests.
+
+**`restore()` calls `at_post_restore()` on what it restored**, inside its transaction, once the
+attributes and tags are back. `ArchivableBaseMixin` declares it as a no-op. It is the consumer's way to
+remake what `at_object_creation` made, which a restore never runs. A raising hook rolls the restore back
+and evicts the instance from the identity map; an already-live object is not given it. `ID-14` and
+`RS-10` to `RS-13`, each failing against the code without it, and `RS-12` against the eviction removed.
+
+**Account `#1`'s characters are not archived at creation**, as `#1` itself is not. `AM-24`, `AM-25` and
+`LO-12`.
+
 ## 2026-09-30 — Reading attributes without restoring
 
 181 tests.

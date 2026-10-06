@@ -130,6 +130,9 @@ including this library's own identity minting, on a row that is a copy rather th
 **So: `bulk_create()` rather than `create()`, and queryset `update()` rather than `save()`.** Both
 issue SQL without going through `save()`.
 
+`restore()` writes into the live database the same way, so a restored object's creation hooks do not
+run either. It gets one hook of its own instead — see *Restore semantics*.
+
 The principle underneath both rules is the same. **A copy is data, not an object.** It has no
 location, nothing puppets it, no scripts tick on it, and nothing should fire hooks at it. The moment
 the library treats an archived row as a live object, it stops being an archive and starts being a
@@ -335,8 +338,9 @@ The two exception types are published because a caller cannot handle what it can
 `archive()` raises `NotArchivable` and `restore()` raises `NotArchived`.
 
 The mixins are published because nothing is archivable without one. What a consumer reaches through
-an instance — `archive_id`, `archive_now()`, `at_archive_init()`, `owner_account_archive_id`,
-`get_owner_lockstring()` — arrives with the mixin and needs no export of its own.
+an instance — `archive_id`, `archive_now()`, `at_archive_init()`, `at_post_restore()`,
+`owner_account_archive_id`, `get_owner_lockstring()` — arrives with the mixin and needs no export of its
+own.
 
 Resolution is lazy. The package sits in `INSTALLED_APPS` and `api` reaches `models.py`, so a
 re-export at module scope would run while Django is still building its app registry and raise
@@ -593,6 +597,23 @@ simply nowhere. Nothing is at risk of being lost, because restore hands back the
 it back; deciding where it belongs and what it reattaches to is a game decision, and the consumer is
 better placed to make it than any library could be.
 
+### `at_post_restore()` — setup that creation would have done
+
+A restore writes rows, so `at_object_creation` does not run on the restored object. Anything a
+typeclass made there as a separate object — something it holds by reference rather than as a value —
+comes back as a reference to a row this database does not hold, and reads as `None`.
+
+`restore()` calls `at_post_restore()` on the restored object once its attributes and tags are back.
+`ArchivableBaseMixin` declares it as a no-op; a consumer overrides it to make those objects again,
+calling `super()` as with any hook. Restoring an object that is already live does not call it, because
+nothing was restored.
+
+**It runs inside the restore's transaction.** A hook that raises undoes the restore, and the exception
+reaches the caller. Run after the commit instead, a raising hook would leave the object live, the next
+`restore()` would take the already-live branch, and the hook would never run again. The rolled-back
+instance is evicted from Evennia's identity map as well, so a retry that lands on the same primary key
+is not handed it.
+
 ### A name taken while its owner was away
 
 An account's username is unique, and a world rebuild frees every name in it. So a player who stops
@@ -674,6 +695,11 @@ collides on `username`, and an initial-setup failure stops the Server *and* the 
 The check is on the primary key, not on `is_superuser`. A second superuser account is not what Evennia
 demands be present and its name collides with nothing, so it is archived like any other account — which
 is what lets a consumer have a privileged account that can move between instances.
+
+**The characters `#1` creates are not archived either.** Evennia's initial setup makes one for it on
+every instance, and a character's owner stamp names its account — which for `#1` is never in the
+archive, so an archived copy would name an owner that cannot be restored. The same primary-key check,
+in `at_post_create_character`.
 
 Objects are not archived at creation `[TBD — needs discussion: `ArchivableObjectMixin` mints through
 `at_object_creation`, which a game may reach thousands of times an hour through a spawner. Characters

@@ -539,6 +539,18 @@ def restore(archive_id, return_object=True):
                 **{f"{owner}_id": live_pk, f"{target}_id": note.pk}
             )
 
+        # Inside the transaction, so a hook that raises undoes the restore.
+        # Left live instead, the next restore takes the already-live branch
+        # and the hook never runs again.
+        restored = db_model.objects.get(pk=live_pk)
+        try:
+            restored.at_post_restore()
+        except Exception:
+            # The rollback removes the row, not Evennia's cached instance of
+            # it — a retry landing on the same key would be handed this one.
+            restored.flush_from_cache(force=True)
+            raise
+
     ArchiveRecord.objects.using(ARCHIVE_ALIAS).filter(pk=archive_id).update(
         last_restored=timezone.now()
     )
