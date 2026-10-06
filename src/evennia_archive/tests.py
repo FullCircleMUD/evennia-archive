@@ -546,6 +546,39 @@ class TestArchivableAccountMixin(BaseEvenniaTest):
 
         archiving.assert_called_once_with(account)
 
+    def test_account_ones_characters_are_not_archived(self):
+        """AM-24
+
+        The character's owner stamp names `#1`, which the archive never
+        holds, so an archived copy would name an owner that cannot be
+        restored. The key is faked as in `AM-22`.
+        """
+        account = self._account()
+        character = create_object(ArchivableTestCharacter, key="Root")
+
+        with mock.patch.object(type(account), "pk", 1), mock.patch(
+            "evennia_archive.api.archive"
+        ) as archiving:
+            account.at_post_create_character(character)
+
+        archiving.assert_not_called()
+
+    def test_another_superusers_characters_are_archived(self):
+        """AM-25
+
+        Being a superuser is not the reason `#1`'s characters are skipped,
+        as `AM-23` says of the account.
+        """
+        account = self._account()
+        account.is_superuser = True
+        account.save()
+        character = create_object(ArchivableTestCharacter, key="Rowan")
+
+        with mock.patch("evennia_archive.api.archive") as archiving:
+            account.at_post_create_character(character)
+
+        archiving.assert_called_once_with(character)
+
     def _departed(self, key="rowan"):
         """An account archived and then gone from the live database."""
         account = self._account(key)
@@ -2430,6 +2463,20 @@ class TestArchiveLogging(BaseEvenniaTest):
             account.at_account_creation()
 
         self.assertEqual(self.levels(logged), ["INFO"])
+
+    def test_skipping_account_ones_character_logs_an_info(self):
+        """LO-12"""
+        account = self._account("first")
+        character = create_object(ArchivableTestCharacter, key="Root")
+
+        # The key faked as in `LO-07`.
+        with mock.patch.object(type(account), "pk", 1), mock.patch(
+            "evennia_archive.mixins.archive_log"
+        ) as logged:
+            account.at_post_create_character(character)
+
+        self.assertEqual(self.levels(logged), ["INFO"])
+        self.assertIn("Root", str(logged.call_args))
 
     def test_creating_any_other_account_logs_nothing(self):
         """LO-08"""

@@ -338,6 +338,17 @@ class ArchivableAccountMixin(ArchivableBaseMixin):
         # locks rather than what Evennia left behind. A character with an
         # identity and no row behind it names an archive entry that does
         # not exist, and `restore()` on it raises.
+        #
+        # Account #1's characters are not archived. Evennia makes one for it
+        # at first boot on every instance, and its owner stamp names #1, which
+        # is never in the archive — so a copy names an owner that cannot be
+        # restored. Keyed on the primary key, as the account exemption is.
+        if self.pk == 1:
+            archive_log(
+                f"{character.key!r} is not archived: it belongs to account #1."
+            )
+            return
+
         from .api import archive
 
         archive(character)

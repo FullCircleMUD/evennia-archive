@@ -141,8 +141,8 @@ Four sites that would otherwise be silent:
 - **`validate_username` refusing a name the archive holds.** An ordinary username collision is
   discoverable: an admin looks in `accountdb` and sees it. This one is not — the account is not there,
   and without a line the answer to "why was that character not created" exists nowhere.
-- **Account `#1` skipped at creation.** Deliberate and silent, and the first thing to look for on
-  finding that `root` has no archived copy.
+- **Account `#1`, and each character it creates, skipped at creation.** Deliberate and silent, and the
+  first thing to look for on finding that `root`, or one of its characters, has no archived copy.
 
 Successful `archive()` calls are deliberately not logged: the hook fires at every character creation,
 and the volume would bury the four above.
@@ -180,6 +180,7 @@ sites.
 | `LO-09` | A successful `restore()` logs an `INFO` naming the identity and the primary key it came back under | `TestArchiveLogging.test_a_successful_restore_logs_an_info` |
 | `LO-10` | A restore that returned an object already live logs nothing — nothing was rebuilt | `TestArchiveLogging.test_an_idempotent_restore_logs_nothing` |
 | `LO-11` | A successful `delete()` logs an `INFO` naming the identity it destroyed | `TestArchiveLogging.test_a_successful_delete_logs_an_info` |
+| `LO-12` | Skipping a character of account `#1` logs an `INFO` naming it | `TestArchiveLogging.test_skipping_account_ones_character_logs_an_info` |
 | `LO-12` | `delete()` finding nothing to remove logs nothing. That is its documented normal case, and the reason the other path is worth a line | `TestArchiveLogging.test_deleting_nothing_logs_nothing` |
 | `LO-13` | `archive()` refused for an object with no archivable mixin logs an `ERROR` before the raise, carrying the exception's own text — read back from disk | `TestArchiveLogging.test_a_refusal_for_lack_of_a_mixin_logs_an_error` |
 | `LO-14` | `archive()` refused for an object carrying a mixin but no identity — created before the mixin, `at_archive_init()` never run — logs an `ERROR` before the raise, carrying the exception's own text | `TestArchiveLogging.test_a_refusal_for_a_missing_identity_logs_an_error` |
@@ -362,6 +363,8 @@ character is created.
 | `AM-21` | A different case of an archived username is refused too. Evennia authenticates case-insensitively, so `Rowan` and `rowan` are one account to it | `test_an_archived_username_is_refused_whatever_the_case` |
 | `AM-22` | Account `#1` is not archived at creation | `test_account_one_is_not_archived_at_creation` |
 | `AM-23` | Another superuser is archived like any other account — being a superuser is not the reason `#1` is skipped | `test_another_superuser_is_archived` |
+| `AM-24` | A character created by account `#1` is not archived | `test_account_ones_characters_are_not_archived` |
+| `AM-25` | A character created by another superuser is archived — being a superuser is not the reason `#1`'s are skipped | `test_another_superusers_characters_are_archived` |
 
 `AM-08` to `AM-12` are why this mixin exists rather than a plain identity stamp. Evennia writes a
 character's `puppet`, `edit` and `delete` locks at creation with the account's and the character's
@@ -394,6 +397,10 @@ that Portal down with it. Found by booting a second instance in `evennia-scaling
 this library is concerned: it is not what Evennia demands be present, its name collides with nothing,
 and a consumer may well want one that can be archived and restored like any other. `#1` is the
 constraint; superuser-ness was standing in for it.
+
+**`AM-24` and `AM-25` apply the same rule to `#1`'s characters.** Evennia's initial setup creates one
+for `#1` on every instance, and a character's owner stamp names its account — which for `#1` is never
+in the archive. An archived copy would name an owner that cannot be restored.
 
 **`AM-18` keeps a departed player's name.** The archive is a clone of Evennia's schema, so it carries
 Evennia's `UNIQUE` on `username`. An account archived and then deleted leaves that name held in the
